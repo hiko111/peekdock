@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PeekDock · Unified</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div id="app" class="app">
+
+  <!-- ======================= TOPBAR ======================= -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="6" width="20" height="12" rx="3" stroke="currentColor" stroke-width="1.8"/>
+        <circle cx="8" cy="12" r="2" fill="currentColor" opacity=".6"/>
+        <circle cx="14" cy="12" r="2" fill="currentColor"/>
+      </svg>
+      <span>PeekDock</span>
+    </div>
+
+    <nav class="mode-switcher" role="tablist">
+      <button class="mode-tab is-active" data-panel="codex" role="tab">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        CodeX
+      </button>
+      <button class="mode-tab" data-panel="jim" role="tab">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="4" stroke="currentColor" stroke-width="2"/><path d="M8 12h8M12 8v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        即梦
+      </button>
+      <button class="mode-tab" data-panel="claude" role="tab">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Claude
+      </button>
+    </nav>
+
+    <div class="topbar-right">
+      <div class="topbar-status">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-label">connected</span>
+      </div>
+      <div class="topbar-time" id="topbar-time"></div>
+    </div>
+  </header>
+
+  <!-- ======================= MAIN ======================= -->
+  <div class="main-layout">
+
+    <!-- +++++++++++++++++++++++++++++++++++++++++++++++
+         PANEL: CODEX
+         +++++++++++++++++++++++++++++++++++++++++++++++ -->
+    <section class="panel-view is-active" id="panel-codex" role="tabpanel">
+
+      <!-- Activity Bar -->
+      <div class="activity-bar">
+        <div class="activity-icon" data-tip="Explorer" onclick="codexActivateView('files')">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 7h18M3 12h18M3 17h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </div>
+        <div class="activity-icon" data-tip="Search" onclick="codexActivateView('search')">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="1.8"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </div>
+        <div class="activity-icon" data-tip="Git" onclick="codexActivateView('git')">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10" stroke="currentColor" stroke-width="1.8" stroke-dasharray="3 2" fill="none"/></svg>
+        </div>
+        <div class="activity-icon is-active" data-tip="Chat" onclick="codexActivateView('chat')">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <div class="activity-icon" data-tip="Extensions">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="8" height="8" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="3" width="8" height="8" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="3" y="13" width="8" height="8" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="13" width="8" height="8" rx="2" stroke="currentColor" stroke-width="1.8"/></svg>
+        </div>
+        <div class="activity-spacer"></div>
+        <div class="activity-icon" data-tip="Account">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.8"/><path d="M4 20c0-4 3.58-7 8-7s8 3 8 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </div>
+      </div>
+
+      <!-- Sidebar (Explorer) -->
+      <aside class="sidebar-codex" id="sidebar-codex">
+        <div class="sidebar-view" id="view-files">
+          <div class="sidebar-header">Explorer</div>
+          <div class="sidebar-tree">
+            <div class="tree-section">
+              <div class="tree-section-label">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M3 7h18M3 12h18M3 17h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                PEEKDOCK
+              </div>
+              <div class="tree-item is-active">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z" stroke="#e3b341" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="13 2 13 9 20 9" stroke="#e3b341" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                app_main.cpp
+              </div>
+              <div class="tree-item">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z" stroke="#e3b341" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="13 2 13 9 20 9" stroke="#e3b341" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                task_protocol.cpp
+              </div>
+              <div class="tree-item has-children">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" class="chevron"><path d="M9 18l6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M3 7h18M3 12h18M3 17h18" stroke="#8b949e" stroke-width="1.5" stroke-linecap="round"/></svg>
+                components
+              </div>
+              <div class="tree-item has-children">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" class="chevron"><path d="M9 18l6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M3 7h18M3 12h18M3 17h18" stroke="#8b949e" stroke-width="1.5" stroke-linecap="round"/></svg>
+                protocol
+              </div>
+              <div class="tree-item">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z" stroke="#e3b341" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="13 2 13 9 20 9" stroke="#e3b341" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                platformio.ini
+              </div>
+              <div class="tree-item">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z" stroke="#e3b341" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="13 2 13 9 20 9" stroke="#e3b341" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                sdkconfig.defaults
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Editor Panel -->
+      <div class="editor-panel">
+        <!-- Tabs -->
+        <div class="editor-tabs">
+          <div class="editor-tab is-active">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="13 2 13 9 20 9" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            app_main.cpp
+            <span class="tab-dot"></span>
+          </div>
+          <div class="editor-tab">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z" stroke="#e3b341" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="13 2 13 9 20 9" stroke="#e3b341" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            task_protocol.cpp
+          </div>
+          <div class="editor-tab-spacer"></div>
+          <div class="editor-tab-actions">
+            <button class="editor-tab-btn" title="Split Editor">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.8"/><line x1="12" y1="3" x2="12" y2="21" stroke="currentColor" stroke-width="1.8"/></svg>
+            </button>
+            <button class="editor-tab-btn" title="Close">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Editor Content -->
+        <div class="editor-content" id="codex-editor">
+<pre class="code-editor"><span class="code-line"><span class="code-ln"> 1</span><span class="code-keyword">static</span> <span class="code-type">esp_err_t</span> <span class="code-fn">init_lvgl</span><span class="code-punct">() {</span></span>
+<span class="code-line"><span class="code-ln"> 2</span>    <span class="code-lbl">lvgl_port_cfg_t</span> <span class="code-prop">lvgl_cfg</span> <span class="code-punct">= {};</span></span>
+<span class="code-line"><span class="code-ln"> 3</span>    <span class="code-prop">lvgl_cfg</span><span class="code-punct">.</span><span class="code-prop">task_priority</span> <span class="code-punct">=</span> <span class="code-num">4</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln"> 4</span>    <span class="code-prop">lvgl_cfg</span><span class="code-punct">.</span><span class="code-prop">task_stack</span> <span class="code-punct">=</span> <span class="code-num">1024</span> <span class="code-punct">*</span> <span class="code-num">10</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln"> 5</span>    <span class="code-prop">lvgl_cfg</span><span class="code-punct">.</span><span class="code-prop">task_affinity</span> <span class="code-punct">=</span> <span class="code-num">-1</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln"> 6</span>    <span class="code-prop">lvgl_cfg</span><span class="code-punct">.</span><span class="code-prop">task_max_sleep_ms</span> <span class="code-punct">=</span> <span class="code-num">500</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln"> 7</span>    <span class="code-prop">lvgl_cfg</span><span class="code-punct">.</span><span class="code-prop">timer_period_ms</span> <span class="code-punct">=</span> <span class="code-num">5</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln"> 8</span>    <span class="code-fn">ESP_RETURN_ON_ERROR</span><span class="code-punct">(</span><span class="code-fn">lvgl_port_init</span><span class="code-punct">(&amp;</span><span class="code-prop">lvgl_cfg</span><span class="code-punct">),</span> <span class="code-str">TAG</span><span class="code-punct">,</span> <span class="code-str">"LVGL init failed"</span><span class="code-punct">);</span></span>
+<span class="code-line"><span class="code-ln"> 9</span></span>
+<span class="code-line"><span class="code-ln">10</span>    <span class="code-lbl">lvgl_port_display_cfg_t</span> <span class="code-prop">display_cfg</span> <span class="code-punct">= {};</span></span>
+<span class="code-line"><span class="code-ln">11</span>    <span class="code-prop">display_cfg</span><span class="code-punct">.</span><span class="code-prop">io_handle</span> <span class="code-punct">=</span> <span class="code-prop">io_handle</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln">12</span>    <span class="code-prop">display_cfg</span><span class="code-punct">.</span><span class="code-prop">panel_handle</span> <span class="code-punct">=</span> <span class="code-prop">panel_handle</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln">13</span>    <span class="code-prop">display_cfg</span><span class="code-punct">.</span><span class="code-prop">buffer_size</span> <span class="code-punct">=</span> <span class="code-prop">LCD_H_RES</span> <span class="code-punct">*</span> <span class="code-prop">LCD_DRAW_BUFFER_HEIGHT</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln">14</span>    <span class="code-prop">display_cfg</span><span class="code-punct">.</span><span class="code-prop">double_buffer</span> <span class="code-punct">=</span> <span class="code-prop">LCD_DRAW_BUFFER_DOUBLE</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln">15</span>    <span class="code-prop">display_cfg</span><span class="code-punct">.</span><span class="code-prop">hres</span> <span class="code-punct">=</span> <span class="code-prop">LCD_H_RES</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln">16</span>    <span class="code-prop">display_cfg</span><span class="code-punct">.</span><span class="code-prop">flags</span><span class="code-punct">.</span><span class="code-prop">swap_bytes</span> <span class="code-punct">=</span> <span class="code-num">false</span><span class="code-punct">;</span> <span class="code-comment">// &lt;-- FIX: JD9853 needs native RGB565</span></span>
+<span class="code-line"><span class="code-ln">17</span>    <span class="code-prop">display_cfg</span><span class="code-punct">.</span><span class="code-prop">flags</span><span class="code-punct">.</span><span class="code-prop">buff_dma</span> <span class="code-punct">=</span> <span class="code-num">true</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln">18</span>    <span class="code-prop">display_cfg</span><span class="code-punct">.</span><span class="code-prop">rotation</span><span class="code-punct">.</span><span class="code-prop">swap_xy</span> <span class="code-punct">=</span> <span class="code-num">false</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln">19</span></span>
+<span class="code-line"><span class="code-ln">20</span>    <span class="code-prop">lvgl_display</span> <span class="code-punct">=</span> <span class="code-fn">lvgl_port_add_disp</span><span class="code-punct">(&amp;</span><span class="code-prop">display_cfg</span><span class="code-punct">);</span></span>
+<span class="code-line"><span class="code-ln">21</span>    <span class="code-keyword">return</span> <span class="code-prop">lvgl_display</span> <span class="code-punct">?&amp;</span> <span class="code-prop">lvgl_touch</span> <span class="code-punct">?</span> <span class="code-fn">ESP_OK</span> <span class="code-punct">:</span> <span class="code-fn">ESP_FAIL</span><span class="code-punct">;</span></span>
+<span class="code-line"><span class="code-ln">22</span><span class="code-punct">}</span></span></pre>
+        </div>
+
+        <!-- Panel Tabs (Problems/Output/Terminal/Debug) -->
+        <div class="bottom-tabs">
+          <div class="bottom-tab is-active">Problems</div>
+          <div class="bottom-tab">Output</div>
+          <div class="bottom-tab">Debug Console</div>
+          <div class="bottom-tab-spacer"></div>
+          <div class="bottom-tab-icon" title="Toggle Panel">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M7 13l5 5 5-5M7 6l5-5 5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+        </div>
+
+        <!-- Terminal -->
+        <div class="terminal-panel">
+          <div class="terminal-tabs">
+            <div class="terminal-tab is-active">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><polyline points="4 17 10 11 4 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="19" x2="20" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              TERMINAL
+            </div>
+            <div class="terminal-tab">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              ASK CODEX
+            </div>
+          </div>
+          <div class="terminal-output" id="codex-terminal">
+            <div class="terminal-line">
+              <span class="t-dim">$ </span><span class="t-text">idf.py build</span>
+            </div>
+            <div class="terminal-line">
+              <span class="t-ok">[SUCCESS] </span><span class="t-text">Project build complete.</span>
+            </div>
+            <div class="terminal-line">
+              <span class="t-dim">$ </span><span class="t-text">idf.py flash</span>
+            </div>
+            <div class="terminal-line">
+              <span class="t-info">Espressif IDF... v5.5</span>
+            </div>
+            <div class="terminal-line">
+              <span class="t-dim">$ </span><span class="t-text t-cursor">_</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Panel -->
+      <aside class="right-panel">
+        <div class="right-tabs">
+          <div class="right-tab is-active">Ask CodeX</div>
+          <div class="right-tab">References</div>
+        </div>
+        <div class="right-content">
+          <div class="codex-ask-messages" id="codex-ask-messages">
+            <div class="codex-ask-hint">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#58a6ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <p>Ask about your codebase — I'll search across all files to answer.</p>
+              <div class="codex-ask-suggestions">
+                <button class="suggestion-chip" data-q="How does the LVGL flush callback work?">How does the LVGL flush callback work?</button>
+                <button class="suggestion-chip" data-q="Explain the JD9853 panel init sequence">Explain the JD9853 panel init sequence</button>
+                <button class="suggestion-chip" data-q="What causes white screen on ESP32-S3?">What causes white screen on ESP32-S3?</button>
+              </div>
+            </div>
+          </div>
+          <div class="codex-ask-input-area">
+            <div class="codex-ask-input-wrap">
+              <textarea class="codex-ask-input" id="codex-ask-input" placeholder="Ask about your code..." rows="1"></textarea>
+              <button class="codex-ask-send" id="codex-ask-send">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><line x1="22" y1="2" x2="11" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polygon points="22 2 15 22 11 13 2 9 22 2" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Status Bar -->
+      <div class="status-bar">
+        <div class="status-left">
+          <span class="status-item">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5" fill="#3fb950"/></svg>
+            main
+          </span>
+          <span class="status-item">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            0 problems
+          </span>
+        </div>
+        <div class="status-right">
+          <span class="status-item">Ln 16, Col 44</span>
+          <span class="status-item">UTF-8</span>
+          <span class="status-item">C++</span>
+          <span class="status-item">ESP-IDF v5.5</span>
+          <span class="status-item">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            CodeX ✕
+          </span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- +++++++++++++++++++++++++++++++++++++++++++++++
+         PANEL: JIM (即梦)
+         +++++++++++++++++++++++++++++++++++++++++++++++ -->
+    <section class="panel-view" id="panel-jim" role="tabpanel">
+
+      <!-- Jim Left Nav -->
+      <aside class="jim-sidebar">
+        <div class="jim-logo">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="5" fill="#8b5cf6"/><path d="M8 12h8M12 8v8" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+          <div>
+            <div class="jim-logo-name">即梦</div>
+            <div class="jim-logo-sub">Dreamina</div>
+          </div>
+        </div>
+        <nav class="jim-nav">
+          <div class="jim-nav-item is-active" data-view="generate" onclick="jimSwitchView('generate')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15l-5-5L5 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            图片生成
+          </div>
+          <div class="jim-nav-item" data-view="video" onclick="jimSwitchView('video')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><polygon points="23 7 16 12 23 17 23 7" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><rect x="1" y="5" width="15" height="14" rx="2" stroke="currentColor" stroke-width="2"/></svg>
+            视频生成
+          </div>
+          <div class="jim-nav-item" data-view="history" onclick="jimSwitchView('history')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            历史记录
+          </div>
+          <div class="jim-nav-item" data-view="credit" onclick="jimSwitchView('credit')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 100 7h5a3.5 3.5 0 110 7H6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            账户 credits
+          </div>
+        </nav>
+        <div class="jim-sidebar-footer">
+          <div class="jim-user">
+            <div class="jim-avatar">K</div>
+            <div class="jim-user-info">
+              <div class="jim-user-name">Karina</div>
+              <div class="jim-user-status">Pro Plan</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Jim Main Area -->
+      <div class="jim-main">
+        <!-- Generate View -->
+        <div class="jim-view" id="jim-view-generate">
+
+          <div class="jim-header">
+            <div class="jim-header-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="5" fill="#8b5cf6"/><path d="M8 12h8M12 8v8" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+              图片生成
+            </div>
+            <div class="jim-header-actions">
+              <button class="jim-btn jim-btn-ghost">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Canvas -->
+          <div class="jim-canvas-wrap">
+            <div class="jim-canvas" id="jim-canvas">
+              <div class="jim-canvas-empty" id="jim-canvas-empty">
+                <div class="jim-canvas-empty-icon">
+                  <svg width="52" height="52" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="#c4b5fd" stroke-width="1.5"/><circle cx="8.5" cy="8.5" r="2" stroke="#c4b5fd" stroke-width="1.5"/><path d="M21 15l-5-5L5 21" stroke="#c4b5fd" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </div>
+                <p class="jim-canvas-empty-title">描述你的创意</p>
+                <p class="jim-canvas-empty-sub">生成的图片将在这里展示</p>
+              </div>
+              <img class="jim-canvas-img" id="jim-canvas-img" alt="Generated" />
+              <div class="jim-canvas-loading" id="jim-canvas-loading" style="display:none">
+                <div class="jim-spinner">
+                  <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="none" stroke="#8b5cf6" stroke-width="3" stroke-dasharray="28 18"><animateTransform attributeName="transform" type="rotate" from="0 22 22" to="360 22 22" dur="0.9s" repeatCount="indefinite"/></circle></svg>
+                </div>
+                <p id="jim-loading-text">正在生成...</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Prompt -->
+          <div class="jim-prompt-area">
+            <div class="jim-prompt-box">
+              <textarea class="jim-textarea" id="jim-prompt-textarea" placeholder="描述你想要的画面，比如：一位穿着华丽汉服的女子，站在云海之上，远眺群山，动漫风格，光影分明，细节丰富" rows="3"></textarea>
+              <div class="jim-prompt-bar">
+                <span class="jim-char-count"><span id="jim-char-n">0</span> / 500</span>
+                <div class="jim-prompt-actions">
+                  <button class="jim-btn jim-btn-icon jim-btn-ghost" id="jim-clear-btn" title="清空">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Model & Options -->
+            <div class="jim-options">
+              <div class="jim-option-row">
+                <div class="jim-option-label">模型</div>
+                <div class="jim-option-pills">
+                  <button class="jim-pill is-active" data-model="通用">通用</button>
+                  <button class="jim-pill" data-model="摄影">摄影</button>
+                  <button class="jim-pill" data-model="设计">设计</button>
+                  <button class="jim-pill" data-model="3D">3D</button>
+                </div>
+              </div>
+              <div class="jim-option-row">
+                <div class="jim-option-label">比例</div>
+                <div class="jim-option-pills">
+                  <button class="jim-pill is-active" data-ratio="1:1">1:1</button>
+                  <button class="jim-pill" data-ratio="16:9">16:9</button>
+                  <button class="jim-pill" data-ratio="9:16">9:16</button>
+                  <button class="jim-pill" data-ratio="3:4">3:4</button>
+                </div>
+              </div>
+              <div class="jim-option-row">
+                <div class="jim-option-label">风格</div>
+                <div class="jim-option-pills">
+                  <button class="jim-pill is-active" data-style="动漫">动漫</button>
+                  <button class="jim-pill" data-style="写实">写实</button>
+                  <button class="jim-pill" data-style="水彩">水彩</button>
+                  <button class="jim-pill" data-style="油画">油画</button>
+                  <button class="jim-pill" data-style="国风">国风</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Generate Button -->
+            <div class="jim-gen-footer">
+              <div class="jim-credit-info">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 100 7h5a3.5 3.5 0 110 7H6" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round"/></svg>
+                <span>每次消耗 <strong>2</strong> credits</span>
+              </div>
+              <button class="jim-btn jim-btn-primary jim-btn-generate" id="jim-generate-btn">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" fill="currentColor"/></svg>
+                生成图片
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Video View -->
+        <div class="jim-view" id="jim-view-video" style="display:none">
+          <div class="jim-header">
+            <div class="jim-header-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polygon points="23 7 16 12 23 17 23 7" stroke="#8b5cf6" stroke-width="2" stroke-linejoin="round"/><rect x="1" y="5" width="15" height="14" rx="2" stroke="#8b5cf6" stroke-width="2"/></svg>
+              视频生成
+            </div>
+          </div>
+          <div class="jim-video-area">
+            <div class="jim-video-placeholder">
+              <svg width="56" height="56" viewBox="0 0 24 24" fill="none"><polygon points="23 7 16 12 23 17 23 7" stroke="#c4b5fd" stroke-width="1.5" stroke-linejoin="round"/><rect x="1" y="5" width="15" height="14" rx="2" stroke="#c4b5fd" stroke-width="1.5"/></svg>
+              <p>上传图片或输入描述，生成视频</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- History View -->
+        <div class="jim-view" id="jim-view-history" style="display:none">
+          <div class="jim-header">
+            <div class="jim-header-title">历史记录</div>
+          </div>
+          <div class="jim-history-list" id="jim-history-list">
+            <div class="jim-history-empty">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#d1c4e9" stroke-width="1.5"/><polyline points="12 6 12 12 16 14" stroke="#d1c4e9" stroke-width="1.5" stroke-linecap="round"/></svg>
+              <p>暂无生成记录</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Credit View -->
+        <div class="jim-view" id="jim-view-credit" style="display:none">
+          <div class="jim-header">
+            <div class="jim-header-title">账户信息</div>
+          </div>
+          <div class="jim-credit-card">
+            <div class="jim-credit-balance">
+              <div class="jim-credit-num" id="jim-credit-num">--</div>
+              <div class="jim-credit-label">剩余 credits</div>
+            </div>
+            <div class="jim-credit-detail">
+              <div class="jim-credit-detail-item">
+                <span>普通图片</span><span>2 credits / 张</span>
+              </div>
+              <div class="jim-credit-detail-item">
+                <span>高清图片</span><span>5 credits / 张</span>
+              </div>
+              <div class="jim-credit-detail-item">
+                <span>视频生成</span><span>20 credits / 条</span>
+              </div>
+            </div>
+            <button class="jim-btn jim-btn-outline" id="jim-check-credit-btn">检查余额</button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- +++++++++++++++++++++++++++++++++++++++++++++++
+         PANEL: CLAUDE
+         +++++++++++++++++++++++++++++++++++++++++++++++ -->
+    <section class="panel-view" id="panel-claude" role="tabpanel">
+
+      <!-- Left Sidebar -->
+      <aside class="claude-sidebar">
+        <div class="claude-sidebar-top">
+          <button class="claude-new-chat-btn" id="claude-new-chat">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            New Chat
+          </button>
+        </div>
+        <div class="claude-chat-history" id="claude-chat-history">
+          <div class="claude-history-group-label">Today</div>
+          <div class="claude-history-item is-active">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Review the ESP32 LVGL display driver
+          </div>
+          <div class="claude-history-group-label">Yesterday</div>
+          <div class="claude-history-item">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            How to fix the white screen issue
+          </div>
+          <div class="claude-history-item">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Optimize ESP32 power consumption
+          </div>
+          <div class="claude-history-group-label">This Week</div>
+          <div class="claude-history-item">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Session token handling in auth module
+          </div>
+        </div>
+        <div class="claude-sidebar-bottom">
+          <div class="claude-user-row">
+            <div class="claude-avatar">K</div>
+            <div class="claude-user-details">
+              <div class="claude-user-name">Karina</div>
+              <div class="claude-plan-badge">Pro</div>
+            </div>
+          </div>
+          <button class="claude-settings-btn" title="Settings">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="2"/></svg>
+          </button>
+        </div>
+      </aside>
+
+      <!-- Claude Main -->
+      <div class="claude-main">
+
+        <!-- Welcome / Messages -->
+        <div class="claude-messages" id="claude-messages">
+
+          <div class="claude-welcome-state" id="claude-welcome">
+            <div class="claude-welcome-icon">
+              <svg width="34" height="34" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#e88f4f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h2>What can I help with?</h2>
+            <div class="claude-welcome-examples">
+              <button class="claude-example-btn" onclick="claudeFillExample('Review the ESP32 LVGL flush callback for the JD9853 panel, any issues with RGB565 byte order?')">Review ESP32 LVGL flush code</button>
+              <button class="claude-example-btn" onclick="claudeFillExample('Write a function to parse JSON Lines protocol from USB Serial JTAG')">Parse JSON Lines from serial</button>
+              <button class="claude-example-btn" onclick="claudeFillExample('Design a state machine for the PeekDock task handoff between Mac and Dock')">Design task handoff state machine</button>
+              <button class="claude-example-btn" onclick="claudeFillExample('Optimize SPI DMA transfers for 172x320 display on ESP32-S3')">Optimize SPI DMA transfers</button>
+            </div>
+          </div>
+
+          <!-- Messages container (populated by JS) -->
+          <div id="claude-message-list"></div>
+
+          <!-- Thinking indicator -->
+          <div class="claude-thinking" id="claude-thinking" style="display:none">
+            <div class="claude-thinking-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#e88f4f" stroke-width="2"/><path d="M12 6v6l4 2" stroke="#e88f4f" stroke-width="2" stroke-linecap="round"/></svg>
+            </div>
+            <div class="claude-thinking-dots">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Input -->
+        <div class="claude-input-area">
+          <div class="claude-input-container">
+            <div class="claude-input-tools">
+              <button class="claude-tool-btn" title="Attach file">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <button class="claude-tool-btn" title="Attach image">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2"/><circle cx="8.5" cy="8.5" r="1.5" stroke="currentColor" stroke-width="2"/><path d="M21 15l-5-5L5 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              </button>
+            </div>
+            <textarea class="claude-input" id="claude-input" placeholder="Message Claude..." rows="1"></textarea>
+            <button class="claude-send-btn" id="claude-send-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><line x1="22" y1="2" x2="11" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polygon points="22 2 15 22 11 13 2 9 22 2" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+          <p class="claude-disclaimer">Claude can make mistakes. Consider verifying important information.</p>
+        </div>
+
+      </div>
+    </section>
+
+  </div><!-- /.main-layout -->
+
+</div><!-- /#app -->
+
+<script src="app.js" type="module"></script>
+</body>
+</html>

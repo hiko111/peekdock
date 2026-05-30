@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PeekDock Pet</title>
+    <link rel="stylesheet" href="./pet.css">
+  </head>
+  <body>
+    <main id="pet" class="pet is-visible" aria-label="CodeX desktop pet">
+      <button id="avatar-button" class="avatar-button" type="button" aria-label="Toggle task card">
+        <img id="avatar" src="../../assets/raw/codex_idle_01.png" alt="">
+      </button>
+      <section id="task-card" class="task-card" hidden>
+        <span id="phase">idle</span>
+        <strong id="title">CodeX</strong>
+        <small id="status">ready on Mac</small>
+      </section>
+    </main>
+    <script src="./pet.js" type="module"></script>
+  </body>
+</html>

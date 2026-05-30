@@ -1,0 +1,17 @@
+{
+  "name": "peekdock-mac-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "pet": "electron desktop-pet/main.mjs",
+    "pet:tk": "python3 desktop-pet-tk.py",
+    "pet:swift:build": "swiftc desktop-pet-swift/PeekDockPet.swift -o desktop-pet-swift/PeekDockPet",
+    "pet:swift": "desktop-pet-swift/PeekDockPet",
+    "check": "node --check server.mjs && node --check public/app.js && node --check desktop-pet/main.mjs && node --check desktop-pet/preload.mjs && node --check desktop-pet/pet.js"
+  },
+  "devDependencies": {
+    "electron": "^42.3.0"
+  }
+}

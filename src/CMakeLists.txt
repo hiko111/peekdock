@@ -1,0 +1,33 @@
+idf_component_register(
+    SRCS
+        "app/app_main.cpp"
+        "../assets/lvgl/codex_idle_p2.c"
+        "../assets/lvgl/codex_idle_p2_b.c"
+        "../assets/lvgl/codex_running_p2.c"
+        "../assets/lvgl/codex_running_p2_b.c"
+        "../assets/lvgl/codex_completed_p2.c"
+        "../assets/lvgl/codex_completed_p2_b.c"
+        "../assets/lvgl/codex_error_p2.c"
+        "../assets/lvgl/codex_error_p2_b.c"
+        "../assets/lvgl/claude_idle_p2.c"
+        "../assets/lvgl/claude_idle_p2_b.c"
+        "../assets/lvgl/claude_running_p2.c"
+        "../assets/lvgl/claude_running_p2_b.c"
+        "../assets/lvgl/claude_completed_p2.c"
+        "../assets/lvgl/claude_completed_p2_b.c"
+        "protocol/task_protocol.cpp"
+        "ui/screens/peekdock_screen.cpp"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        driver
+        esp_lcd
+        esp_timer
+        esp_bsp
+        esp_lvgl_port
+        json
+        lvgl
+        nvs_flash
+)
+
+target_compile_definitions(${COMPONENT_LIB} PUBLIC LV_LVGL_H_INCLUDE_SIMPLE)

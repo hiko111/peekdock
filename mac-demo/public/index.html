@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PeekDock Test Sender</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="panel">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">PeekDock bridge</p>
+            <h1>Send a task</h1>
+          </div>
+          <div class="connection" id="connection">connecting</div>
+        </header>
+
+        <form id="task-form" class="composer">
+          <label class="field">
+            <span>Prompt</span>
+            <textarea id="prompt" name="prompt" rows="4" maxlength="140" placeholder="Create a landing page for a tiny AI task dock"></textarea>
+          </label>
+
+          <div class="mode-row" aria-label="Display mode">
+            <button class="mode-button is-active" data-mode="clean" type="button">Clean</button>
+            <button class="mode-button" data-mode="desktop" type="button">Normal</button>
+          </div>
+
+          <button id="send" class="primary-button" type="submit">Send</button>
+        </form>
+
+        <section class="task-card" id="task-card" hidden>
+          <div>
+            <span class="task-label">Current task</span>
+            <strong id="task-title">Untitled</strong>
+          </div>
+          <div class="task-meta">
+            <span id="task-phase">idle</span>
+            <span id="task-location">mac</span>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

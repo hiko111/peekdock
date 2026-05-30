@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "demo_name": "peekdock-p0-cross-screen-demo",
+  "serial_port": "/dev/tty.usbmodem1301",
+  "agents": ["codex", "claude_web", "jimeng"],
+  "events": [
+    {
+      "at_ms": 0,
+      "type": "transition_event",
+      "event": "agent_idle_on_mac",
+      "task_id": "task_codex_landing_page",
+      "source": "codex",
+      "screen_role": "mac_idle",
+      "animation_key": "codex_idle"
+    },
+    {
+      "at_ms": 3000,
+      "type": "transition_event",
+      "event": "handoff_to_dock",
+      "task_id": "task_codex_landing_page",
+      "source": "codex",
+      "screen_role": "dock_working",
+      "animation_key": "codex_handoff_in"
+    },
+    {
+      "at_ms": 5000,
+      "type": "task_snapshot",
+      "tasks": [
+        {
+          "task_id": "task_codex_landing_page",
+          "source": "codex",
+          "agent_name": "Codex",
+          "title": "Polish landing page",
+          "status": "running",
+          "status_text": "Codex running",
+          "updated_at": "demo+5s",
+          "progress": null,
+          "result_uri": "/demo-results/codex-review.html",
+          "actions": [],
+          "screen_role": "dock_working",
+          "agent_scene": "coding_room",
+          "animation_key": "codex_running"
+        },
+        {
+          "task_id": "task_claude_prd",
+          "source": "claude_web",
+          "agent_name": "Claude",
+          "title": "Rewrite PRD intro",
+          "status": "needs_input",
+          "status_text": "Need input",
+          "updated_at": "demo+5s",
+          "progress": null,
+          "result_uri": "/demo-results/claude-draft.html",
+          "actions": ["provide_input"],
+          "screen_role": "dock_working",
+          "agent_scene": "writing_room",
+          "animation_key": "claude_needs_input"
+        },
+        {
+          "task_id": "task_jimeng_visual",
+          "source": "jimeng",
+          "agent_name": "Jimeng",
+          "title": "Generate hero frames",
+          "status": "running",
+          "status_text": "Rendering frames",
+          "updated_at": "demo+5s",
+          "progress": null,
+          "result_uri": "/demo-results/jimeng-preview.html",
+          "actions": [],
+          "screen_role": "dock_working",
+          "agent_scene": "studio_cloud",
+          "animation_key": "jimeng_running"
+        }
+      ]
+    },
+    {
+      "at_ms": 14000,
+      "type": "ui_hint",
+      "event": "show_agent",
+      "source": "claude_web"
+    },
+    {
+      "at_ms": 20000,
+      "type": "ui_hint",
+      "event": "show_agent",
+      "source": "jimeng"
+    },
+    {
+      "at_ms": 30000,
+      "type": "task_update",
+      "task": {
+        "task_id": "task_codex_landing_page",
+        "source": "codex",
+        "agent_name": "Codex",
+        "title": "Polish landing page",
+        "status": "completed",
+        "status_text": "Ready to review",
+        "updated_at": "demo+30s",
+        "progress": null,
+        "result_uri": "/demo-results/codex-review.html",
+        "actions": ["open_result"],
+        "screen_role": "dock_working",
+        "agent_scene": "coding_room",
+        "animation_key": "codex_completed"
+      }
+    }
+  ]
+}

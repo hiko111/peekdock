@@ -134,6 +134,9 @@ static esp_err_t esp_lcd_touch_axs5106_read_data(esp_lcd_touch_handle_t tp)
 
     if (points == 0)
     {
+        portENTER_CRITICAL(&tp->data.lock);
+        tp->data.points = 0;
+        portEXIT_CRITICAL(&tp->data.lock);
         return ESP_OK;
     }
 

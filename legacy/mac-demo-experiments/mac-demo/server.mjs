@@ -2,17 +2,20 @@ import { createReadStream, createWriteStream, existsSync, readFileSync, readdirS
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import { homedir } from "node:os";
+import { execFile } from "node:child_process";
 
 const rootDir = resolve(new URL("..", import.meta.url).pathname);
 const publicDir = join(rootDir, "mac-demo", "public");
 const serialPort = process.env.PEEKDOCK_SERIAL_PORT || "/dev/cu.usbmodem1301";
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "127.0.0.1";
+const headlessMode = process.env.PEEKDOCK_HEADLESS === "1";
 const codexSessionsDir = process.env.PEEKDOCK_CODEX_SESSIONS_DIR || join(homedir(), ".codex", "sessions");
 const codexMonitorEnabled = process.env.PEEKDOCK_CODEX_MONITOR !== "0";
 const claudeProjectsDir = process.env.PEEKDOCK_CLAUDE_PROJECTS_DIR || join(homedir(), ".claude", "projects");
 const claudeMonitorEnabled = process.env.PEEKDOCK_CLAUDE_MONITOR !== "0";
-const AGENTS = ["codex", "claude"];
+const AGENTS = ["codex", "claude", "jimeng"];
+const completionSoundPath = process.env.PEEKDOCK_COMPLETE_SOUND || "/System/Library/Sounds/Glass.aiff";
 
 const clients = new Set();
 const state = {
@@ -25,7 +28,8 @@ const state = {
   currentTask: null,
   tasksByAgent: {
     codex: null,
-    claude: null
+    claude: null,
+    jimeng: null
   },
   lastEvent: null
 };
@@ -52,8 +56,10 @@ let realClaudeLastActivity = 0;
 let realClaudeSettleTimer = null;
 const completeToIdleTimers = {
   codex: null,
-  claude: null
+  claude: null,
+  jimeng: null
 };
+const completedSoundTaskIds = new Set();
 const codexInitialTailBytes = 64 * 1024;
 const codexInitialReplayMs = 10_000;
 const codexSettleMs = 45_000;
@@ -78,6 +84,16 @@ const agentMeta = {
     completedKey: "claude_completed",
     failedKey: "claude_error",
     idleKey: "claude_idle"
+  },
+  jimeng: {
+    source: "jimeng",
+    agentName: "JIMENG",
+    taskType: "image",
+    scene: "visual_room",
+    runningKey: "jimeng_running",
+    completedKey: "jimeng_completed",
+    failedKey: "jimeng_error",
+    idleKey: "jimeng_idle"
   }
 };
 
@@ -169,7 +185,9 @@ function setCurrentAgent(agent) {
 }
 
 function agentFromSource(source = "") {
-  return source === "claude" ? "claude" : "codex";
+  if (source === "claude") return "claude";
+  if (source === "jimeng") return "jimeng";
+  return "codex";
 }
 
 function animationKeyFor(agent, status) {
@@ -184,12 +202,14 @@ function baseTaskForAgent(agent, title = "") {
   const meta = agentMeta[agent] || agentMeta.codex;
   const taskId = agent === "claude"
     ? (realClaudeTaskId || `claude_real_${Date.now()}`)
-    : (realCodexTaskId || `codex_real_${Date.now()}`);
+    : agent === "jimeng"
+      ? `jimeng_local_${Date.now()}`
+      : (realCodexTaskId || `codex_real_${Date.now()}`);
   return {
     task_id: taskId,
     source: meta.source,
     agent_name: meta.agentName,
-    title: String(title || `${meta.agentName} task`).slice(0, 90),
+    title: summarizeTitleForDock(title || `${meta.agentName} task`, meta.agentName),
     task_type: meta.taskType,
     status: "running",
     status_text: `watching ${meta.agentName}...`,
@@ -201,6 +221,51 @@ function baseTaskForAgent(agent, title = "") {
     agent_scene: meta.scene,
     animation_key: meta.runningKey
   };
+}
+
+function summarizeTitleForDock(input = "", fallback = "Task") {
+  const raw = String(input || "").replace(/\s+/g, " ").trim();
+  if (!raw) return fallback;
+  const lower = raw.toLowerCase();
+  const hasChinese = /[\u3400-\u9fff]/.test(raw);
+
+  const keywordMap = [
+    [/ui|界面|视觉|排版|小屏|figma|css|design|layout|font|动效|动画|transition|motion/, "Refining UI"],
+    [/esp32|firmware|烧录|flash|serial|串口|硬件|板子|lvgl/, "Firmware test"],
+    [/bug|fix|报错|error|failed|crash|修复/, "Fixing issue"],
+    [/review|检查|审查|diff|pr\b/, "Reviewing code"],
+    [/build|实现|开发|app|website|page|component|功能/, "Building feature"],
+    [/image|picture|photo|即梦|jimeng|生成图|绘图/, "Making image"],
+    [/doc|文档|说明|readme|方案|原理/, "Writing notes"],
+    [/test|测试|verify|验证/, "Running tests"]
+  ];
+  for (const [pattern, title] of keywordMap) {
+    if (pattern.test(lower)) return title;
+  }
+  if (hasChinese) return "Task brief";
+
+  const words = raw
+    .replace(/[^\w\s-]/g, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((word) => !/^(please|help|can|you|the|and|with|this|that|for|into|about)$/i.test(word))
+    .slice(0, 3);
+  if (words.length === 0) return fallback;
+  const title = words.join(" ");
+  return title.length > 24 ? `${title.slice(0, 21)}...` : title;
+}
+
+function playCompletionSound(task) {
+  const taskId = task?.task_id || "";
+  if (!taskId || completedSoundTaskIds.has(taskId)) return;
+  completedSoundTaskIds.add(taskId);
+  if (completedSoundTaskIds.size > 80) completedSoundTaskIds.delete(completedSoundTaskIds.values().next().value);
+
+  if (existsSync(completionSoundPath)) {
+    execFile("afplay", [completionSoundPath], { timeout: 3000 }, () => {});
+    return;
+  }
+  execFile("osascript", ["-e", "beep"], { timeout: 3000 }, () => {});
 }
 
 function broadcast(event) {
@@ -328,7 +393,7 @@ function createTask(prompt) {
     task_id: `codex_${Date.now()}`,
     source: "codex",
     agent_name: "CodeX",
-    title: prompt,
+    title: summarizeTitleForDock(prompt, "Codex task"),
     task_type: "website build",
     status: "running",
     status_text: "crafting interface...",
@@ -559,6 +624,7 @@ function completeTask() {
   }
 
   emitState();
+  playCompletionSound(task);
   scheduleIdleAfterCompletion(agent, task.task_id);
 }
 
@@ -568,7 +634,6 @@ function ensureRealCodexTask(title = "Real Codex task") {
   if (!existing || existing.task_id !== realCodexTaskId) {
     setTaskForAgent("codex", createRealCodexTask(title));
   }
-  setCurrentAgent("codex");
   state.lastPrompt = title;
   return taskForAgent("codex");
 }
@@ -582,8 +647,10 @@ function syncRealCodexTask(status, statusText, options = {}) {
     realCodexTaskId = realCodexTaskId || `codex_real_${Date.now()}`;
     setTaskForAgent("codex", createRealCodexTask(title));
   }
-  setCurrentAgent("codex");
   const task = ensureRealCodexTask(title);
+  if (!state.currentTask || state.currentAgent === "codex") {
+    setCurrentAgent("codex");
+  }
   const previousLocation = state.agentLocation;
   const progress = typeof options.progress === "number" ? options.progress : -1;
   const patch = {
@@ -619,6 +686,7 @@ function syncRealCodexTask(status, statusText, options = {}) {
   }
 
   if (status === "completed") {
+    playCompletionSound(task);
     scheduleIdleAfterCompletion("codex", task.task_id);
   }
 
@@ -638,7 +706,6 @@ function ensureRealClaudeTask(title = "Real Claude task") {
   if (!existing || existing.task_id !== realClaudeTaskId) {
     setTaskForAgent("claude", createRealClaudeTask(title));
   }
-  setCurrentAgent("claude");
   state.lastPrompt = title;
   return taskForAgent("claude");
 }
@@ -653,7 +720,7 @@ function syncRealClaudeTask(status, statusText, options = {}) {
     setTaskForAgent("claude", createRealClaudeTask(title));
   }
 
-  if (!taskForAgent("codex") || state.currentAgent !== "codex") {
+  if (!state.currentTask || state.currentAgent === "claude") {
     setCurrentAgent("claude");
   }
 
@@ -700,6 +767,7 @@ function syncRealClaudeTask(status, statusText, options = {}) {
   }
 
   if (status === "completed") {
+    playCompletionSound(task);
     scheduleIdleAfterCompletion("claude", task.task_id);
   }
 
@@ -727,13 +795,13 @@ function textFromPayload(payload) {
 
 function userTitleFromPayload(payload) {
   const text = textFromPayload(payload).replace(/\s+/g, " ").trim();
-  return text ? text.slice(0, 72) : "Real Codex task";
+  return text ? summarizeTitleForDock(text, "Codex task") : "Codex task";
 }
 
 function claudeTitleFromContent(content) {
   if (typeof content === "string") {
     const normalized = content.replace(/\s+/g, " ").trim();
-    return normalized ? normalized.slice(0, 72) : "Claude Code task";
+    return normalized ? summarizeTitleForDock(normalized, "Claude task") : "Claude task";
   }
   if (!Array.isArray(content)) return "Claude Code task";
   const text = content
@@ -747,7 +815,7 @@ function claudeTitleFromContent(content) {
     .join(" ")
     .replace(/\s+/g, " ")
     .trim();
-  return text ? text.slice(0, 72) : "Claude Code task";
+  return text ? summarizeTitleForDock(text, "Claude task") : "Claude task";
 }
 
 function outputLooksFailed(text) {
@@ -1264,7 +1332,7 @@ const server = createServer(async (req, res) => {
     try {
       const body = await readBody(req);
       const status = String(body.status || "running");
-      const title = String(body.title || "Real Claude smoke test").slice(0, 90);
+      const title = summarizeTitleForDock(body.title || "Real Claude smoke test", "Claude test");
       const statusText = String(body.statusText || "testing Claude bridge...").slice(0, 90);
       realClaudeTaskId = realClaudeTaskId || `claude_real_${Date.now()}`;
       syncRealClaudeTask(status, statusText, {
@@ -1281,7 +1349,7 @@ const server = createServer(async (req, res) => {
     try {
       const body = await readBody(req);
       const status = String(body.status || "running");
-      const title = String(body.title || "Real Codex smoke test").slice(0, 90);
+      const title = summarizeTitleForDock(body.title || "Real Codex smoke test", "Codex test");
       const statusText = String(body.statusText || "testing real Codex bridge...").slice(0, 90);
       realCodexTaskId = realCodexTaskId || `codex_real_${Date.now()}`;
       syncRealCodexTask(status, statusText, {
@@ -1311,10 +1379,18 @@ const server = createServer(async (req, res) => {
   sendJson(res, 404, { ok: false, error: "Not found" });
 });
 
-server.listen(port, host, () => {
+if (headlessMode) {
   openSerial();
   startCodexSessionMonitor();
   startClaudeSessionMonitor();
-  console.log(`PeekDock bridge listening on http://${host}:${port}`);
-  console.log(`Serial target: ${serialPort}${existsSync(serialPort) ? "" : " (not present, UI-only mode)"}`);
-});
+  console.log("PeekDock bridge running in headless mode");
+  console.log(`Serial target: ${serialPort}${existsSync(serialPort) ? "" : " (not present)"}`);
+} else {
+  server.listen(port, host, () => {
+    openSerial();
+    startCodexSessionMonitor();
+    startClaudeSessionMonitor();
+    console.log(`PeekDock bridge listening on http://${host}:${port}`);
+    console.log(`Serial target: ${serialPort}${existsSync(serialPort) ? "" : " (not present, UI-only mode)"}`);
+  });
+}

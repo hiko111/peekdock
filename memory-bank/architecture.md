@@ -8,9 +8,10 @@
 - `assets/lvgl/`: 由 LVGL Image Converter 输出的 `C` image resources。当前流程使用仓库内 `managed_components/lvgl__lvgl/scripts/LVGLImage.py` 离线批量生成，默认格式为 `RGB565A8`。
 - `assets/p0-asset-manifest.md`: P0 demo 使用的最小 PNG 资产清单，以及缺失/可替代资产说明。
 - `demo-results/`: P0 快操打开的本地 HTML 结果页，模拟 Codex/Claude/Jimeng 交付物。
-- `docs/TEAM_HANDOFF.md`: 给协作者的快速上手说明，解释入口文件、当前粗糙边界和推荐 debug 顺序。
-- `docs/HARDWARE_PORTING.md`: 硬件迁移说明，明确哪些层可复用、哪些层必须按板子重配。
-- `mac-demo/`: 本地 Mac bridge、网页测试发送器和桌面小人原型。`server.mjs` 承担单一状态源角色，统一管理 `mode`、`agentLocation`、任务阶段和串口同步；`public/` 只保留网页输入/模式切换/任务卡测试面板；`desktop-pet-swift/PeekDockPet.swift` 是当前主用 Mac 端透明桌宠，`desktop-pet-tk.py` 仅作为 fallback。
+- `runtime-bridge/server.mjs`: 当前唯一的 helper/bridge 主入口。它负责读取 Codex、Claude Code、JiMeng 的真实状态，统一任务模型，通过 USB Serial/JTAG 给 ESP32 发 `task_update` / `task_snapshot` / `transition_event`，并接收小屏动作事件。
+- `scripts/start-peekdock.sh`: 当前 helper 启动脚本；默认串口为 `/dev/cu.usbmodem1301`，默认 host 为 `127.0.0.1`。
+- `scripts/com.peekdock.bridge.plist`: 当前 LaunchAgent 模板，用来把 `runtime-bridge/server.mjs` 作为后台 helper 拉起。
+- `legacy/mac-demo-experiments/`: 旧的 Mac 端网页/桌宠实验，保留作历史参考，不再是当前主链路。
 - `protocol/`: P0 JSON Lines 协议说明和 mock fixtures。`mock-timeline.json` 驱动 helper，`demo-events.jsonl` 可直接作为串口测试数据。
 - `PROJECT_CONTEXT.md`: Waveshare ESP32-S3-Touch-LCD-1.47 的硬件事实、驱动要求和 ESP-IDF 目标约束。
 - `CMakeLists.txt`: ESP-IDF project-level build file for the target firmware.
@@ -46,6 +47,25 @@ P0 采用三层结构：
 1. Mac agent UI：负责闲置态、任务发起离开动画、完成召回动画和后台入口。
 2. Mac/helper bridge：作为权威状态层，负责采集/模拟任务、归一化、发送状态、执行快操。
 3. ESP32-S3 小屏固件：负责工作态展示、多 Agent 横滑、状态动画和动作输入。
+
+## 2026-05-31 Bridge 行为补充
+
+- `runtime-bridge/server.mjs` 的 `openAgentOnMac` 现在把 Claude 入口固定为 `open -a "Trae CN"`，匹配当前 macOS 上的实际应用名，避免 `Trae` 找不到应用。
+- 同一函数对 JiMeng 增加了浏览器复用逻辑：优先读取 `PEEKDOCK_BROWSER`（默认 `chrome`），通过 AppleScript 在 Chrome 或 Safari 现有窗口中查找 URL 包含 `jimeng` 的标签页；找到则激活该标签页，找不到才打开 `https://jimeng.jianying.com/` 新页面。
+- JiMeng 的 AppleScript 执行失败时仍保留 `open <jimengUrl>` 兜底，因此 bridge 重启后即可生效，不依赖固件改动。
+- `runtime-bridge/server.mjs` 现在还包含一个 Chrome-only JiMeng monitor：读取 `PEEKDOCK_JIMENG_MONITOR`（默认开启），后台轮询 URL 包含 `jimeng` 的 Chrome 标签页，对页面执行 JavaScript 抓取 `title`、`href`、正文文本、按钮文案、标题和输入框值，再映射为 PeekDock 的 `idle` / `running` / `completed` / `failed` / `needs_input` 状态。
+- 当前 JiMeng monitor 采用页面文本启发式而非官方 API：首页 `https://jimeng.jianying.com/ai-tool/home` 会被视为 `idle`，出现登录/授权类文案映射为 `needs_input`，出现生成中/排队中等文案映射为 `running`，出现下载/保存/查看结果等动作且不在首页时映射为 `completed`。
+- JiMeng monitor 现已升级为 API-first probe：同一段 Chrome 注入脚本会先从 `performance.getEntriesByType("resource")` 中恢复真实的 `dreamina_subject/get` URL，再用页面内同步 `POST` 请求读取 `ret`、`errmsg`、`itemCount` 和若干任务摘要；只有在 API 无法给出结论时才回退到页面文本启发式。
+- 当前实机验证表明，Chrome 里的 `https://jimeng.jianying.com/ai-tool/generate` 标签页虽然会加载 JiMeng SPA，但 `dreamina_subject/get` 返回 `ret=1015, errmsg=login error`。因此 bridge 现在会把这类场景明确归一为 `needs_input / login required`，而不是误判成普通 `running` 或依赖截图。
+- 随后又把 JiMeng 的对外状态模型进一步简化成三态：`idle`、`running`、`completed`。即使页面内部出现登录提示、追问补充信息或失败类文案，bridge 对外也不再发 `needs_input` / `failed`，而是把首页视为 `idle`、非首页中间过程统一视为 `running`、结果页/完成态统一视为 `completed`。
+- JiMeng snapshot 的 AppleScript 执行路径也从 `exec("osascript ...")` 改成 `execFile("osascript", ["-e", ...])`，避免长脚本在后台轮询里偶发 shell/转义失败。
+- 为了让即梦状态更接近实时，JiMeng snapshot 现在进一步拆成两层：后台 `pollJimengChrome()` 走轻量 polling script，只抓实时判定必需字段；`/api/jimeng-probe` 走详细 probe script，保留深度调试数据。两者共用同一套服务端状态归一逻辑，但不再共用同一份超长浏览器注入脚本。
+- 当前正式主链重新收敛回单 bridge：LaunchAgent 管理的 `runtime-bridge/server.mjs` 监听 `127.0.0.1:4173`，统一承接 Codex、Claude、JiMeng。此前用于联调即梦的 `4191` 只是临时 debug 副本，现已清理，不应再作为真实状态来源。
+- JiMeng 的状态归一现在还包含一个“当前生成优先”规则：在 `/ai-tool/generate` 页面里，如果正文同时出现旧完成结果和新一轮的显式生成信号（如 `图片生成中`、`85%造梦中`），bridge 会优先输出 `running`，避免被历史结果图区误判为 `completed`。
+- JiMeng 的完成态生命周期现重新和 Codex / Claude 对齐：helper 统一在 completed 后经过同一段 hold 时间再回 idle。由于浏览器页面可能仍停留在旧 completed 结果页，bridge 对同一张 completed 页面加了一层最小抑制，避免 completed -> idle 后被同页立即弹回 completed；这只是内部防抖，不改变对外统一的任务状态模型。
+- 当前 runtime bridge 不再依赖旧 `mac-demo/public` 静态页面兜底；主链路只认 `runtime-bridge/server.mjs`、串口同步和本地 API 调试入口。JiMeng 进入非空任务时也会主动切到当前 agent，保证 helper 当前页、小屏页签和任务缓存同步落到 `jimeng`。
+- ESP32 小屏现在为 JiMeng 接入了和 completed 同规格的三套 P2 资源：`jimeng_idle_p2*`、`jimeng_running_p2*`、`jimeng_completed_p2*`。`src/ui/screens/peekdock_screen.cpp` 会按即梦任务的 `idle` / `running` / `completed` 状态切换对应 hero 帧图，不再始终复用 completed 图。
+- JiMeng completed 态的页面信号并不总是通过按钮文案暴露。有些完成页仍会保留旧追问文本，但同时已经出现大量 `dreamina-sign` 结果图和结果元信息（例如 `时间 / 生成模式 / 操作类型`）。bridge 现会在页面快照里额外统计 `generatedImageCount`，并优先把“生成页 + 结果图 + 结果元信息”的组合判成 `completed`。
 
 ## 已确认硬件
 
@@ -160,9 +180,9 @@ Later full demo flow:
 
 ## Current Runtime Entry Points
 
-- Mac Codex sender: `npm --prefix mac-demo start`, then open `http://127.0.0.1:4173`.
-- Send a task to the physical ESP32: submit the form, or call `POST /api/send-task` with `{"prompt":"..."}`.
-- Firmware target build command, once ESP-IDF is installed: `idf.py build`.
+- Helper bridge: `scripts/start-peekdock.sh` or `node runtime-bridge/server.mjs`
+- Physical dock transport: USB Serial/JTAG on `/dev/cu.usbmodem1301`
+- Firmware target build command, once ESP-IDF is installed: `idf.py build`
 
 ## 当前 Mac Bridge / Desktop Pet 状态机
 
@@ -188,6 +208,39 @@ Later full demo flow:
 11. 真实 Claude Code 状态接入当前采用 project JSONL 只读轮询：用户新输入映射为 `running`，assistant `tool_use` 映射为 `running`，权限/确认类 hook 提示映射为 `needs_input`，失败的 `tool_result` 或 hook exit code 映射为 `failed`，assistant `end_turn` 文本映射为 `completed`。
 12. 小屏当前以 `task_snapshot` 为多 agent 本地缓存源，左右滑切换 `currentAgent`，上滑返回 Mac；bridge 始终保证 Mac 和小屏只展示同一个当前 agent。
 13. 本地调试入口 `POST /api/codex-test-event` 和 `POST /api/claude-test-event` 仅用于验证 bridge -> Swift pet -> ESP32 链路，不作为真实任务来源；真实来源仍分别是 Codex 与 Claude Code 的 session/project 日志。
+14. ESP32 小屏 UI 现在固定展示三页 agent：Codex、Claude、JiMeng。Codex/Claude 可以由真实或测试状态驱动，JiMeng 是固件内置占位页，不要求 Mac/helper 提供真实状态。
+15. ESP32 小屏所有可见内容都位于 172 x 320 viewport 内，root/content layer 关闭滚动，避免 LVGL 在右侧显示默认滚动条。
+16. ESP32 小屏左右滑会先在固件本地切换页面并播放短 slide/fade 过渡，再继续发送 `switch_agent_next` / `switch_agent_prev` 给 Mac/helper 做状态同步。
+17. Codex/Claude 真实状态展示现在把底层事件进一步归一为短阶段文案：`analyzing`、`starting`、`editing`、`applying changes`、`running checks`、`reviewing`、`finalizing`、`reconnecting`、`waiting for confirmation`。这些阶段写入 `status_text`，ESP32 小屏直接用作小字状态行。
+18. `completed` 只代表最终任务完成：真实监控不再用静默/settle 定时器自动推断完成；非完成阶段的假进度被限制在 100 以下，只有显式完成事件进入 100，然后沿用 5 秒 completed hold 后回到 idle。
+19. ESP32 小屏在 confirmation/permission 状态下隐藏进度条和百分比，显示跟 agent 主题色一致的 `accept` 按钮；running 状态的右上状态点做轻量呼吸，completed 切入时播放一次小粒子爆发，idle 偶尔显示可点击的小心情气泡。
+20. ESP32 小屏当前 idle 态不再显示 `0%` 进度，而是隐藏百分比/进度条并显示一个小心情框；运行态阶段文案通过 60ms timer 做打字机效果，进度条由 `progress_pulse` 和 `progress_flash` 共同呈现移动充能高光，并在 25/50/75 进度节点触发一次短暂 scale 弹跳。
+21. ESP32 底部三点现在固定为白色，只通过尺寸和透明度表达当前页，不再跟随 agent 主题色。
+22. Codex completion mapping now treats `final_answer` as `finalizing`, not final completion; only explicit `task_complete` becomes `completed`. This is intentionally conservative to avoid mid-task false completed states.
+23. The ESP32 idle panel is now a speech-bubble style card with a small tail and short persona copy; idle suppresses the small phase line and hides progress/percent. The previous progress white-flash object was removed, leaving the simpler moving pulse plus milestone bounce.
+24. The ESP32 idle bubble is intentionally neutral rather than agent-colored: it uses a dark surface, subtle gray border/shadow, two-word persona copy, and a passive right-side mood mark such as `<3` or `..`. The percent number and `%` are positioned as a single centered group to avoid visual separation at `100%`.
+25. Confirmation handling now has an explicit ESP32 -> bridge action path: when the current page is in `needs_input`, a single tap sends `accept_confirmation`. The bridge opens the relevant Mac app and moves the visible dock task to a short `resuming` running state. Confirmation UI uses content-type titles (`Review patch`, `Review command`, `Review network`) plus a compact `waiting...` phase line and `review` CTA.
+26. Codex intervention state is now guarded by explicit approval/confirmation/user-input signals or parsed escalation fields in tool arguments. Ordinary `function_call` and `function_call_output` events stay in `running` and only update `status_text` with phase labels like `reading files`, `using tool`, `tool finished`, or `checking output`; tool output text no longer maps Codex to `failed` by itself.
+27. New task focus is handled as a deliberate one-shot transition. Real Codex `user_message`, real Claude new user content, and local test-event endpoints can mark an update as focus-worthy, causing the bridge to switch `currentAgent`; subsequent status updates for the same task do not steal focus. Firmware also treats a new `task_id` for a given `source` as a page focus signal and stores tasks in fixed agent page slots.
+28. Codex review state uses a split guard before entering `needs_input`: explicit `exec_command` / `shell_command` approvals with `sandbox_permissions=require_escalated` or a non-empty `justification` immediately show ESP32 `Review`, matching Codex's real command-approval flow. More ambiguous confirmation/user-input-like events still schedule a short macOS Accessibility probe and only show `Review` if the live Codex UI contains a three-option approval marker such as `本次会话不再询问` / `don't ask again`. This keeps ordinary file/tool activity in `running` while avoiding missed real command approvals. Tapping the ESP32 review action for Codex activates Codex, tries to click the "don't ask again" approval button when accessible, and otherwise sends keyboard option `2` plus Enter.
+29. Review-state touch handling distinguishes single tap and double tap on-device. A single tap waits for the 360ms double-tap window and then sends `accept_confirmation`; a second tap inside that window cancels the accept and sends `open_agent`, so users can double-tap the agent in Review state to return to Codex instead of approving.
+30. `runtime-bridge/server.mjs` now keeps Codex Review visible with a short review hold window. While the hold is active, later `function_call_output` / `custom_tool_call_output` events are ignored instead of overwriting `needs_input` back to `running`; the hold is released after the ESP32 Review action successfully sends Codex approval option 2.
+31. The bridge now logs every serial write with a compact summary (`task_update`, `task_snapshot`, or `transition_event`) and suppresses exact duplicate serial payloads for a short window. Duplicate snapshots use a longer window so JiMeng/monitor polling cannot flood the ESP32 with identical refreshes.
+30. Codex Mac activation uses `open -b com.openai.codex` instead of AppleScript `tell application "Codex"`; the latter can fail with `-1728` despite `/Applications/Codex.app` existing. AppleScript is now only used after activation to inspect/click approval buttons or fall back to `2` + Enter.
+31. Codex approval automation depends on macOS Accessibility permission for `osascript` / System Events. If macOS returns `-25211`, the bridge now opens Codex and keeps the dock task in `needs_input` with `open Codex` instead of falsely switching to `resuming`; only a successful option-2 script changes the task back to `running`.
+32. Runtime bridge headless mode now also listens on `127.0.0.1:4173` and prints a build marker at startup. This keeps the physical serial bridge active while allowing local debug endpoints such as `/api/debug-codex-accept` to simulate an ESP32 Review tap and verify the Codex approval automation path.
+33. ESP32 UI motion now uses a single faster LVGL animation timer for life cues while keeping protocol unchanged. `peekdock_screen.cpp` owns hero breathing, status-dot mood glow, progress-head shimmer, static page dots, light content slide, label fade transitions, and `peekdock_screen_touch_feedback()`; `app_main.cpp` only triggers the feedback pulse on long press/double tap. Whole-screen opacity/scale transitions are intentionally avoided because the black `content_layer` background can read as a large overlay during swipes.
+33. Review tap handling was simplified after repeated testing: when the current page is in confirmation state, any tap now immediately sends `accept_confirmation`; the older double-tap-to-open behavior is disabled for Review state because it made rapid testing produce `open_agent` instead of approval. The bridge also trims serial action/source fields and logs `Dock confirmation requested` / `Dock confirmation handling` before running the Codex option-2 script.
+34. ESP32 hero art now supports a local-only drag hide interaction. `app_main.cpp` detects a deliberate vertical drag on the current agent and calls UI-only APIs in `peekdock_screen.cpp`; upward drag previews shrink/fade/translate the hero toward the top edge, release beyond threshold hides only the hero image, and downward drag restores it. This does not emit `return_to_mac`, so the older Mac handoff path remains available outside this hero-local gesture.
+35. The local hero drag interaction is performance-sensitive: drag preview no longer deletes LVGL animations every frame, and `app_main.cpp` throttles small drag progress deltas before taking the LVGL lock. The same ESP32 screen pass also adds agent-colored title pills, state-specific status-dot rhythms, per-agent hero idle motion, an idle panel micro-breath, and a small top-right mood bubble using default-font-safe symbols.
+36. The local hero drag interaction now treats LVGL as UI-thread-owned. `app_main.cpp` only records touch intent and calls lock-free request functions, while `peekdock_screen.cpp` consumes drag/hide/restore requests from a lightweight LVGL timer before mutating hero transforms. This avoids the touch task repeatedly taking the LVGL lock during finger movement and prevents drag preview from fighting hero breathing animations. The separate top-right mood bubble is disabled; idle expression remains in the lower idle panel only.
+37. ESP32 touch debugging now has a minimal firmware-side monitor: `app_main.cpp` posts concise `touch:` logs and `peekdock_screen.cpp` renders the latest touch state in a tiny top overlay. Upward hero drag also has a watchdog path: once the drag reaches the top threshold, or the touch controller does not release after a clear upward drag, the firmware commits hide and clears the touch sequence so later swipes/taps are not locked by a stale `touch_was_down` state.
+38. Touch input is now treated as unreliable for continuous coordinates on the AXS5106 path. The firmware keeps swipe recognition when `dx/dy` are available, but adds deterministic tap zones: left/right screen edges switch agents, top hides the hero, and bottom restores it. The AXS5106 driver also clears `tp->data.points` when the controller reports zero touches so stale points cannot survive a release/no-touch read.
+39. Because upward hero drags can leave the AXS5106 path in a stale pressed state, the touch task now performs a short hardware reset of the touch controller via `EXAMPLE_PIN_TP_RST` after hero-hide commits and after stale-touch watchdog expiry. It also ignores touch input for 300ms after reset to drain residual controller state before accepting new taps/swipes.
+40. Mid-drag coordinate loss is now treated as a first-class failure mode. `src/app/app_main.cpp` tracks the last observed motion timestamp during hero drag; if the AXS5106 stops producing new coordinates for ~180ms before a release arrives, the firmware auto-recovers on its own path: progress >= 35 commits the local hide, otherwise the hero snaps back, and both branches reset the touch controller. This keeps a half-finished upward drag from pinning the whole screen in one stale touch sequence.
+41. The touch gesture state machine in `src/app/app_main.cpp` has been refactored into a release-driven flow: touch down only records origin/time, move phase locks to horizontal or vertical direction once intent is clear, and all actions are emitted only after a valid locked gesture or on release. Horizontal swipe now has higher priority than hero hide once horizontal intent is clear; confirmation no longer fires on touch down; double tap is evaluated from center-zone release events; and all `peekdock_screen_*` calls from the touch task go through LVGL lock wrappers instead of direct unlocked UI access.
+41. The local hero hide interaction is now page-local and release-driven. `peekdock_screen.cpp` stores hidden state per fixed agent page instead of one global flag, so hiding Codex no longer hides Claude/JiMeng or blocks later horizontal swipes. `app_main.cpp` no longer commits hide mid-drag or sends `return_to_mac` for a plain upward swipe; it only previews while the finger is moving, commits hide on release past threshold, and restores only when the user drags downward from the bottom area on that same hidden page.
+42. The touch gesture model no longer treats `hero hidden` as a modal restore-only state. `src/app/app_main.cpp` now separates `hero_hidden` from `gesture_mode`: horizontal swipe and double tap work the same whether the hero is visible or hidden, upward drag only hides when the hero was visible at touch-down, downward drag only restores when the hero was hidden at touch-down, and invalid vertical directions are marked consumed instead of hijacking later tap/swipe handling.
 
 这层逻辑当前主要在：
 
@@ -200,8 +253,7 @@ Later full demo flow:
 - `src/ui/screens/peekdock_screen.cpp`
 - `src/app/app_main.cpp`
 
-`mac-demo/desktop-pet/` 中保留 Electron 透明窗尝试，但当前本机启动 Electron 会 `SIGABRT`，所以现阶段 demo 以 Swift/AppKit 桌宠为准。
-Tk 版曾用于验证置顶窗口路径，但 macOS Tk 在透明度、PNG 和窗口可见性上不够稳定，当前只保留为 fallback。
+历史上的 `mac-demo` / 桌宠实验现已迁入 legacy 范畴，不再作为当前协作者理解项目主链路的入口。
 
 ## 目录整理说明
 

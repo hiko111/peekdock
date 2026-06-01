@@ -49,6 +49,7 @@ static lv_obj_t* mood_label = nullptr;
 static lv_obj_t* mood_bubble = nullptr;
 static lv_obj_t* tool_chip = nullptr;
 static lv_obj_t* tool_dot = nullptr;
+static lv_obj_t* touch_debug_label = nullptr;
 static lv_obj_t* page_dots[3] = {};
 static lv_obj_t* burst_particles[10] = {};
 static lv_timer_t* animation_timer = nullptr;
@@ -73,20 +74,17 @@ static int hero_drag_applied_progress = -1;
 static volatile int hero_drag_requested_progress = -1;
 static volatile int hero_drag_requested_command = 0;
 static bool hero_dragging = false;
-static bool hero_hidden_for_page[3] = {};
+static volatile bool hero_locally_hidden = false;
+static volatile bool touch_debug_pending = false;
 static char last_rendered_task_id[64] = {};
 static char last_rendered_status[24] = {};
 static char typewriter_text[96] = {};
+static char touch_debug_text[96] = {};
 
 static constexpr int HERO_COMMAND_HIDE = 1;
 static constexpr int HERO_COMMAND_RESTORE = 2;
 
 static void consume_hero_drag_requests();
-static size_t current_page_index();
-static bool hero_hidden_on_page(size_t index);
-static bool hero_hidden_for_current_page();
-static void set_hero_hidden_for_current_page(bool hidden);
-static void apply_current_page_hero_visibility();
 
 static void scale_exec(void* obj, int32_t value) {
     lv_obj_set_style_transform_scale(static_cast<lv_obj_t*>(obj), value, 0);
@@ -147,8 +145,8 @@ static lv_color_t agent_color(const PeekDockTask* task) {
 static void apply_hero_layout(const PeekDockTask* task) {
     const bool is_claude = is_claude_task(task);
     const bool is_jimeng = is_jimeng_task(task);
-    const int32_t scale = is_claude ? 292 : is_jimeng ? 244 : 264;
-    const lv_coord_t y = is_claude ? 58 : is_jimeng ? 70 : 64;
+    const int32_t scale = is_claude ? 286 : is_jimeng ? 238 : LV_SCALE_NONE;
+    const lv_coord_t y = is_claude ? 54 : is_jimeng ? 67 : 62;
     lv_image_set_scale(hero_image, scale);
     lv_obj_align(hero_image, LV_ALIGN_TOP_MID, 0, y);
 }
@@ -170,43 +168,18 @@ static void reset_hero_local_transform(bool show) {
     lv_obj_set_style_transform_scale(hero_image, 256, 0);
     lv_obj_set_style_opa(hero_image, LV_OPA_COVER, 0);
     if (show) {
+        hero_locally_hidden = false;
         lv_obj_clear_flag(hero_image, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
-static void clear_hero_drag_preview() {
-    if (!hero_dragging && hero_drag_applied_progress < 0) return;
+static void restore_hidden_hero_for_new_context() {
+    if (!hero_locally_hidden && !hero_dragging) return;
     delete_hero_motion_anims();
     reset_hero_local_transform(true);
     hero_drag_applied_progress = -1;
     hero_drag_requested_progress = -1;
     hero_drag_requested_command = 0;
-}
-
-static size_t current_page_index() {
-    return selected_task_index < 3 ? selected_task_index : 0;
-}
-
-static bool hero_hidden_on_page(size_t index) {
-    return index < 3 ? hero_hidden_for_page[index] : false;
-}
-
-static bool hero_hidden_for_current_page() {
-    return hero_hidden_on_page(current_page_index());
-}
-
-static void set_hero_hidden_for_current_page(bool hidden) {
-    const size_t index = current_page_index();
-    if (index < 3) hero_hidden_for_page[index] = hidden;
-}
-
-static void apply_current_page_hero_visibility() {
-    if (!hero_image) return;
-    if (hero_hidden_for_current_page()) {
-        lv_obj_add_flag(hero_image, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_clear_flag(hero_image, LV_OBJ_FLAG_HIDDEN);
-    }
 }
 
 static void update_title_pill(const PeekDockTask* task) {
@@ -216,6 +189,18 @@ static void update_title_pill(const PeekDockTask* task) {
     lv_obj_set_style_border_color(title_pill, lv_color_mix(accent, lv_color_hex(0xffffff), 58), 0);
     lv_obj_set_style_shadow_color(title_pill, accent, 0);
     lv_obj_set_style_text_color(title_label, lv_color_hex(0xf9fbf7), 0);
+}
+
+static void set_touch_debug(const char* text) {
+    std::snprintf(touch_debug_text, sizeof(touch_debug_text), "%s", text ? text : "");
+    touch_debug_pending = true;
+}
+
+static void consume_touch_debug() {
+    if (!touch_debug_pending || !touch_debug_label) return;
+    touch_debug_pending = false;
+    lv_label_set_text(touch_debug_label, touch_debug_text);
+    lv_obj_clear_flag(touch_debug_label, LV_OBJ_FLAG_HIDDEN);
 }
 
 static const lv_image_dsc_t* image_frames_for_task(const PeekDockTask* task, int frame_index) {
@@ -243,7 +228,10 @@ static const lv_image_dsc_t* image_frames_for_task(const PeekDockTask* task, int
 }
 
 static lv_color_t signal_color_for_task(const PeekDockTask* task) {
-    if (!task) return lv_color_hex(0x56605c);
+    if (!task || std::strcmp(task->status, "idle") == 0) return lv_color_hex(0x69c86e);
+    if (std::strcmp(task->status, "failed") == 0) return lv_color_hex(0xf0645b);
+    if (std::strcmp(task->status, "needs_input") == 0) return lv_color_hex(0x6da8ff);
+    if (std::strcmp(task->status, "completed") == 0) return lv_color_hex(0xf2c66d);
     return agent_color(task);
 }
 
@@ -305,12 +293,12 @@ static bool task_needs_confirmation(const PeekDockTask* task) {
 
 static const char* confirmation_title_for_task(const PeekDockTask* task) {
     (void)task;
-    return "Need Input";
+    return "Review";
 }
 
 static const char* phase_text_for_task(const PeekDockTask* task) {
     if (!task) return "idle";
-    if (task_needs_confirmation(task)) return "review required";
+    if (task_needs_confirmation(task)) return "waiting...";
     if (task->status_text[0] != '\0') return task->status_text;
     if (std::strcmp(task->status, "completed") == 0) return "completed";
     if (std::strcmp(task->status, "failed") == 0) return "error";
@@ -378,96 +366,23 @@ static void compact_title(const char* input, char* output, size_t output_size) {
     std::snprintf(output, output_size, "%s", normalized);
 }
 
-static void compact_detail_text(const char* input, char* output, size_t output_size) {
-    if (!output || output_size == 0) return;
-    const char* fallback = "";
-    if (!input || input[0] == '\0') {
-        std::snprintf(output, output_size, "%s", fallback);
-        return;
-    }
-
-    char normalized[96] = {};
-    size_t w = 0;
-    bool last_space = false;
-    for (size_t r = 0; input[r] != '\0' && w + 1 < sizeof(normalized); ++r) {
-        const unsigned char c = static_cast<unsigned char>(input[r]);
-        if (c == '\n' || c == '\r' || c == '\t') {
-            if (!last_space && w > 0) normalized[w++] = ' ';
-            last_space = true;
-            continue;
-        }
-        if (c == ' ') {
-            if (!last_space && w > 0) normalized[w++] = ' ';
-            last_space = true;
-            continue;
-        }
-        normalized[w++] = static_cast<char>(c);
-        last_space = false;
-    }
-    while (w > 0 && normalized[w - 1] == ' ') --w;
-    normalized[w] = '\0';
-
-    if (w > 18) {
-        normalized[15] = '.';
-        normalized[16] = '.';
-        normalized[17] = '.';
-        normalized[18] = '\0';
-    }
-    std::snprintf(output, output_size, "%s", normalized);
-}
-
 static void set_agent_dots() {
     const int active = static_cast<int>(selected_task_index);
     for (int i = 0; i < 3; ++i) {
-        lv_obj_set_size(page_dots[i], i == active ? 16 : 4, 4);
+        lv_obj_set_size(page_dots[i], i == active ? 18 : 6, 6);
         lv_obj_set_style_bg_color(page_dots[i], lv_color_hex(0xffffff), 0);
-        lv_obj_set_style_bg_opa(page_dots[i], i == active ? LV_OPA_50 : LV_OPA_10, 0);
-        lv_obj_align(page_dots[i], LV_ALIGN_BOTTOM_MID, (i - 1) * 14, -18);
+        lv_obj_set_style_bg_opa(page_dots[i], i == active ? LV_OPA_COVER : LV_OPA_40, 0);
+        lv_obj_align(page_dots[i], LV_ALIGN_BOTTOM_MID, (i - 1) * 18, -18);
     }
-}
-
-static void apply_shell_surface_style() {
-    if (!content_layer) return;
-    lv_obj_set_style_radius(content_layer, 24, 0);
-    lv_obj_set_style_bg_color(content_layer, lv_color_hex(0x0B0C11), 0);
-    lv_obj_set_style_bg_grad_color(content_layer, lv_color_hex(0x101218), 0);
-    lv_obj_set_style_bg_grad_dir(content_layer, LV_GRAD_DIR_VER, 0);
-    lv_obj_set_style_bg_main_stop(content_layer, 0, 0);
-    lv_obj_set_style_bg_grad_stop(content_layer, 255, 0);
-    lv_obj_set_style_bg_opa(content_layer, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(content_layer, 4, 0);
-    lv_obj_set_style_border_color(content_layer, lv_color_hex(0x20232C), 0);
-    lv_obj_set_style_border_opa(content_layer, LV_OPA_COVER, 0);
-    lv_obj_set_style_shadow_width(content_layer, 40, 0);
-    lv_obj_set_style_shadow_spread(content_layer, 0, 0);
-    lv_obj_set_style_shadow_ofs_x(content_layer, 0, 0);
-    lv_obj_set_style_shadow_ofs_y(content_layer, 20, 0);
-    lv_obj_set_style_shadow_color(content_layer, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_shadow_opa(content_layer, LV_OPA_70, 0);
-    lv_obj_set_style_pad_all(content_layer, 0, 0);
-    lv_obj_set_style_clip_corner(content_layer, true, 0);
-}
-
-static void layout_percent_group() {
-    if (!percent_group || !percent_label || !percent_unit_label) return;
-    lv_obj_update_layout(percent_label);
-    lv_obj_update_layout(percent_unit_label);
-    const lv_coord_t group_w = lv_obj_get_width(percent_group);
-    const lv_coord_t number_w = lv_obj_get_width(percent_label);
-    const lv_coord_t unit_w = lv_obj_get_width(percent_unit_label);
-    const lv_coord_t gap = 2;
-    const lv_coord_t total_w = number_w + gap + unit_w;
-    const lv_coord_t start_x = (group_w - total_w) / 2;
-    lv_obj_set_pos(percent_label, start_x, -1);
-    lv_obj_set_pos(percent_unit_label, start_x + number_w + gap, 5);
-    lv_obj_align(percent_group, LV_ALIGN_TOP_MID, 0, 252);
 }
 
 static void set_percent_label(int progress) {
     char percent_text[12];
     std::snprintf(percent_text, sizeof(percent_text), "%d", progress);
     lv_label_set_text(percent_label, percent_text);
-    layout_percent_group();
+    lv_obj_align(percent_group, LV_ALIGN_TOP_MID, 0, 242);
+    lv_obj_align(percent_label, LV_ALIGN_LEFT_MID, 7, -1);
+    lv_obj_align(percent_unit_label, LV_ALIGN_RIGHT_MID, -9, 4);
 }
 
 static void set_label_text_fade(lv_obj_t* label, const char* text) {
@@ -598,10 +513,9 @@ static void layout_progress_pulse(const PeekDockTask* task) {
     }
 
     lv_obj_clear_flag(progress_pulse, LV_OBJ_FLAG_HIDDEN);
-    const lv_coord_t rail_x = lv_obj_get_x(progress_bar);
-    const lv_coord_t rail_y = lv_obj_get_y(progress_bar);
-    const lv_coord_t rail_width = lv_obj_get_width(progress_bar);
-    const int filled = (rail_width * current_progress) / 100;
+    const int rail_x = (172 - 126) / 2;
+    const int rail_y = 224;
+    const int filled = (126 * current_progress) / 100;
     const int travel = filled > 18 ? filled - 18 : 1;
     const int x = rail_x + ((pulse_tick * 7) % travel);
     const lv_opa_t opa = (pulse_tick % 3) == 0 ? LV_OPA_COVER : (pulse_tick % 3) == 1 ? LV_OPA_70 : LV_OPA_40;
@@ -624,7 +538,6 @@ static void set_progress_area_mode(const PeekDockTask* task) {
         lv_obj_add_flag(progress_bar, LV_OBJ_FLAG_HIDDEN);
         if (progress_pulse) lv_obj_add_flag(progress_pulse, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(accept_button, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(tool_chip, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(idle_panel, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(idle_tail, LV_OBJ_FLAG_HIDDEN);
         return;
@@ -638,10 +551,7 @@ static void set_progress_area_mode(const PeekDockTask* task) {
         lv_obj_add_flag(progress_bar, LV_OBJ_FLAG_HIDDEN);
         if (progress_pulse) lv_obj_add_flag(progress_pulse, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(accept_button, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(tool_chip, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_style_bg_color(accept_button, lv_color_hex(0x23252e), 0);
-        lv_obj_set_style_border_width(accept_button, 1, 0);
-        lv_obj_set_style_border_color(accept_button, lv_color_hex(0x3a404d), 0);
+        lv_obj_set_style_bg_color(accept_button, agent_color(task), 0);
         lv_obj_set_style_shadow_color(accept_button, agent_color(task), 0);
         return;
     }
@@ -650,7 +560,6 @@ static void set_progress_area_mode(const PeekDockTask* task) {
     if (percent_unit_label) lv_obj_clear_flag(percent_unit_label, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(progress_bar, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(accept_button, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(tool_chip, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void animate_percent_to(int progress) {
@@ -757,15 +666,28 @@ static bool upsert_task_for_source(const PeekDockTask* task) {
 
 static void animate_content_in(int direction) {
     if (!content_layer) return;
-    (void)direction;
-    lv_obj_set_x(content_layer, 0);
+    const int start_x = direction == 0 ? 0 : direction * 16;
+    lv_obj_set_x(content_layer, start_x);
     lv_obj_set_style_opa(content_layer, LV_OPA_COVER, 0);
     lv_obj_set_style_transform_scale(content_layer, 256, 0);
+
+    if (direction != 0) {
+        lv_anim_t slide;
+        lv_anim_init(&slide);
+        lv_anim_set_var(&slide, content_layer);
+        lv_anim_set_values(&slide, start_x, 0);
+        lv_anim_set_time(&slide, 240);
+        lv_anim_set_path_cb(&slide, lv_anim_path_ease_out);
+        lv_anim_set_exec_cb(&slide, [](void* obj, int32_t value) {
+            lv_obj_set_x(static_cast<lv_obj_t*>(obj), value);
+        });
+        lv_anim_start(&slide);
+    }
 }
 
 static void animate_hero_enter(int32_t start_scale, int32_t end_scale, lv_opa_t start_opa = LV_OPA_40) {
     if (!hero_image) return;
-    if (hero_hidden_for_current_page() || hero_dragging) return;
+    if (hero_locally_hidden || hero_dragging) return;
     lv_obj_set_style_transform_pivot_x(hero_image, 54, 0);
     lv_obj_set_style_transform_pivot_y(hero_image, 54, 0);
     lv_obj_set_style_transform_scale(hero_image, start_scale, 0);
@@ -800,7 +722,7 @@ static void animate_state_change() {
 
 static void start_hero_breath(const PeekDockTask* task) {
     if (!hero_image || !task) return;
-    if (hero_hidden_for_current_page() || hero_dragging) return;
+    if (hero_locally_hidden || hero_dragging) return;
     lv_anim_delete(hero_image, scale_exec);
     lv_anim_delete(hero_image, translate_x_exec);
     lv_anim_delete(hero_image, translate_y_exec);
@@ -900,14 +822,14 @@ static void start_status_dot_mood(const PeekDockTask* task) {
         lv_anim_set_time(&glow, 620);
         lv_anim_set_delay(&glow, 120);
     } else if (needs_input) {
-        lv_anim_set_values(&glow, 72, 140);
-        lv_anim_set_time(&glow, 900);
-        lv_anim_set_playback_time(&glow, 900);
+        lv_anim_set_values(&glow, LV_OPA_40, LV_OPA_90);
+        lv_anim_set_time(&glow, 760);
+        lv_anim_set_playback_time(&glow, 760);
         lv_anim_set_repeat_count(&glow, LV_ANIM_REPEAT_INFINITE);
     } else if (idle) {
-        lv_anim_set_values(&glow, 30, 52);
-        lv_anim_set_time(&glow, 1800);
-        lv_anim_set_playback_time(&glow, 1800);
+        lv_anim_set_values(&glow, LV_OPA_10, LV_OPA_40);
+        lv_anim_set_time(&glow, 1650);
+        lv_anim_set_playback_time(&glow, 1650);
         lv_anim_set_repeat_count(&glow, LV_ANIM_REPEAT_INFINITE);
     } else {
         lv_anim_set_values(&glow, LV_OPA_30, LV_OPA_70);
@@ -990,6 +912,9 @@ static void start_completed_burst(const PeekDockTask* task) {
 
 static void update_mood_bubble(const PeekDockTask* task) {
     (void)task;
+    if (!mood_bubble || !mood_label) return;
+    lv_obj_add_flag(mood_bubble, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(mood_label, LV_OBJ_FLAG_HIDDEN);
 }
 
 static const char* idle_copy_for_task(const PeekDockTask* task) {
@@ -1040,12 +965,12 @@ static void update_idle_panel(const PeekDockTask* task) {
     lv_obj_clear_flag(idle_tail, LV_OBJ_FLAG_HIDDEN);
     const int phase = pulse_tick % 16;
     const int wave = phase < 8 ? phase : 16 - phase;
-    lv_obj_set_style_transform_pivot_x(idle_panel, 58, 0);
-    lv_obj_set_style_transform_pivot_y(idle_panel, 18, 0);
+    lv_obj_set_style_transform_pivot_x(idle_panel, 63, 0);
+    lv_obj_set_style_transform_pivot_y(idle_panel, 20, 0);
     lv_obj_set_style_transform_scale(idle_panel, 256 + wave, 0);
     lv_obj_set_style_transform_scale(idle_tail, 256 + wave, 0);
-    lv_obj_set_style_bg_color(idle_panel, lv_color_hex(0x23252e), 0);
-    lv_obj_set_style_border_color(idle_panel, lv_color_hex(0x2f333d), 0);
+    lv_obj_set_style_bg_color(idle_panel, bubble_color, 0);
+    lv_obj_set_style_border_color(idle_panel, lv_color_hex(0x2a2e38), 0);
     lv_obj_set_style_shadow_color(idle_panel, lv_color_hex(0x05060a), 0);
     lv_obj_set_style_bg_color(idle_tail, bubble_color, 0);
     lv_label_set_text(idle_text_label, idle_copy_for_task(task));
@@ -1089,9 +1014,9 @@ static void render_idle() {
     lv_image_set_src(hero_image, &codex_idle_p2);
     PeekDockTask task = placeholder_task(selected_task_index);
     current_task = task;
-    clear_hero_drag_preview();
+    restore_hidden_hero_for_new_context();
     apply_hero_layout(&task);
-    apply_current_page_hero_visibility();
+    lv_obj_clear_flag(hero_image, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(title_label, agent_label_for_task(&task));
     update_title_pill(&task);
     progress_milestone_mask = 0;
@@ -1099,16 +1024,18 @@ static void render_idle() {
     lv_obj_set_style_transform_scale(hero_image, 256, 0);
     set_progress(&task, false);
     set_progress_area_mode(&task);
-    lv_label_set_text(task_type_label, "");
+    lv_label_set_text(task_type_label, chip_label_for_task(&task));
+    char title[32] = {};
+    compact_title(task.title, title, sizeof(title));
+    set_label_text_fade(status_label, title);
     stop_typewriter("");
     set_label_text_fade(status_label, "IDLE MODE");
-    set_label_text_fade(title_small_label, "");
     lv_obj_set_style_bg_color(progress_bar, lv_color_hex(0x1f2228), LV_PART_MAIN);
     const lv_color_t accent = agent_color(&task);
     lv_obj_set_style_bg_color(progress_bar, accent, LV_PART_INDICATOR);
     if (progress_pulse) lv_obj_set_style_bg_color(progress_pulse, accent, 0);
-    set_signal_color(agent_color(&task), false);
-    if (!hero_hidden_for_current_page()) start_hero_breath(&task);
+    set_signal_color(lv_color_hex(0x56605c), false);
+    start_hero_breath(&task);
     start_status_dot_mood(&task);
     update_mood_bubble(&task);
     update_idle_panel(&task);
@@ -1126,49 +1053,37 @@ static void render_task(const PeekDockTask* task) {
     current_task = *task;
     const bool changed_state = std::strcmp(last_rendered_task_id, task->task_id) != 0 ||
         std::strcmp(last_rendered_status, task->status) != 0;
-    if (changed_state || transition_direction != 0) clear_hero_drag_preview();
+    if (changed_state || transition_direction != 0) restore_hidden_hero_for_new_context();
     std::snprintf(last_rendered_task_id, sizeof(last_rendered_task_id), "%s", task->task_id);
     std::snprintf(last_rendered_status, sizeof(last_rendered_status), "%s", task->status);
 
+    if (!hero_locally_hidden) lv_obj_clear_flag(hero_image, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(title_label, agent_label_for_task(task));
     update_title_pill(task);
     lv_image_set_src(hero_image, image_frames_for_task(task, animation_tick));
     apply_hero_layout(task);
-    apply_current_page_hero_visibility();
     if (changed_state) {
         progress_milestone_mask = 0;
         last_pulse_x = -100;
     }
     set_progress(task, changed_state);
     set_progress_area_mode(task);
-    const char* detail_text = task_needs_confirmation(task)
-        ? phase_text_for_task(task)
-        : chip_label_for_task(task);
-    char detail_line[24] = {};
-    compact_detail_text(detail_text, detail_line, sizeof(detail_line));
-    lv_label_set_text(task_type_label, detail_line);
+    lv_label_set_text(task_type_label, chip_label_for_task(task));
     char title[32] = {};
-    const bool needs_input = task_needs_confirmation(task);
-    const char* display_title = needs_input
+    const char* display_title = task_needs_confirmation(task)
         ? confirmation_title_for_task(task)
         : is_generic_task_title(task->title) ? primary_status_for_task(task) : task->title;
     compact_title(display_title[0] ? display_title : task_type_fallback(task), title, sizeof(title));
     set_label_text_fade(status_label, title);
     if (std::strcmp(task->status, "idle") == 0) {
         set_label_text_fade(status_label, "IDLE MODE");
-        stop_typewriter("waiting quietly");
-    } else if (std::strcmp(task->status, "running") == 0 && !needs_input) {
+        stop_typewriter("");
+    } else if (std::strcmp(task->status, "running") == 0 && !task_needs_confirmation(task)) {
         if (changed_state || std::strcmp(typewriter_text, phase_text_for_task(task)) != 0) {
             start_typewriter(phase_text_for_task(task));
         }
     } else {
         stop_typewriter(phase_text_for_task(task));
-    }
-    if (std::strcmp(task->status, "idle") == 0) {
-        lv_label_set_text(task_type_label, "");
-    } else if (needs_input) {
-        const char* waiting = task->status_text[0] ? task->status_text : "waiting...";
-        stop_typewriter(waiting);
     }
     lv_obj_set_style_bg_color(progress_bar, lv_color_hex(0x1f2228), LV_PART_MAIN);
     const lv_color_t accent = agent_color(task);
@@ -1176,24 +1091,8 @@ static void render_task(const PeekDockTask* task) {
     lv_obj_set_style_bg_color(progress_bar, accent, LV_PART_INDICATOR);
     if (progress_pulse) lv_obj_set_style_bg_color(progress_pulse, accent, 0);
     set_signal_color(signal, std::strcmp(task->status, "idle") != 0);
-    if (needs_input) {
-        lv_obj_set_style_bg_color(accept_button, lv_color_hex(0x23252e), 0);
-        lv_obj_set_style_border_color(accept_button, lv_color_mix(signal, lv_color_hex(0xffffff), 72), 0);
-        lv_obj_set_style_shadow_width(accept_button, 18, 0);
-        lv_obj_set_style_shadow_opa(accept_button, LV_OPA_30, 0);
-        lv_label_set_text(accept_label, "review now");
-        lv_obj_set_style_text_color(accept_label, lv_color_hex(0xf4f6fa), 0);
-        lv_obj_set_style_text_color(status_label, lv_color_hex(0xf5f6f8), 0);
-        lv_obj_set_style_text_color(title_small_label, lv_color_hex(0xb9c2d4), 0);
-    } else {
-        lv_label_set_text(accept_label, "review");
-        lv_obj_set_style_shadow_width(accept_button, 0, 0);
-        lv_obj_set_style_shadow_opa(accept_button, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_text_color(status_label, lv_color_hex(0xf2f4f8), 0);
-        lv_obj_set_style_text_color(title_small_label, lv_color_hex(0x7f8794), 0);
-    }
     if (changed_state || transition_direction != 0) {
-        if (!hero_hidden_for_current_page()) start_hero_breath(task);
+        start_hero_breath(task);
         start_status_dot_mood(task);
     }
     update_mood_bubble(task);
@@ -1234,7 +1133,7 @@ static void render_transition(const PeekDockEvent* event) {
         lv_label_set_text(title_label, "CODEX");
         displayed_progress = 0;
         set_percent_label(0);
-        lv_label_set_text(task_type_label, "");
+        lv_label_set_text(task_type_label, "on mac");
         set_progress_area_mode(&transition_task);
         if (idle_panel) lv_obj_add_flag(idle_panel, LV_OBJ_FLAG_HIDDEN);
         if (mood_bubble) lv_obj_add_flag(mood_bubble, LV_OBJ_FLAG_HIDDEN);
@@ -1258,7 +1157,7 @@ static void running_tick(lv_timer_t*) {
     frame_subtick = (frame_subtick + 1) % 4;
     if (frame_subtick == 0) animation_tick = (animation_tick + 1) % 2;
     pulse_tick = (pulse_tick + 1) % 32;
-    if (!hero_hidden_for_current_page() && !hero_dragging) {
+    if (!hero_locally_hidden && !hero_dragging) {
         lv_image_set_src(hero_image, image_frames_for_task(&current_task, animation_tick));
         apply_hero_layout(&current_task);
     }
@@ -1287,17 +1186,17 @@ static void running_tick(lv_timer_t*) {
 
 void peekdock_screen_switch_page(int direction) {
     if (direction == 0) return;
-    clear_hero_drag_preview();
+    restore_hidden_hero_for_new_context();
     selected_task_index = (selected_task_index + (direction > 0 ? 1 : 2)) % 3;
     transition_direction = direction > 0 ? 1 : -1;
     PeekDockTask task = task_for_page(selected_task_index);
     render_task(&task);
-    if (!hero_hidden_for_current_page()) animate_hero_enter(216, 256, LV_OPA_30);
+    animate_hero_enter(216, 256, LV_OPA_30);
 }
 
 void peekdock_screen_touch_feedback() {
     if (!hero_image) return;
-    if (hero_hidden_for_current_page() || hero_dragging) return;
+    if (hero_locally_hidden || hero_dragging) return;
     lv_obj_set_style_transform_pivot_x(hero_image, 54, 0);
     lv_obj_set_style_transform_pivot_y(hero_image, 54, 0);
     lv_anim_delete(hero_image, scale_exec);
@@ -1350,21 +1249,51 @@ static void apply_hero_drag_now(int progress) {
 static void commit_hero_hide_now() {
     if (!hero_image) return;
     hero_dragging = false;
-    set_hero_hidden_for_current_page(true);
+    hero_locally_hidden = true;
     hero_drag_applied_progress = -1;
+    lv_obj_clear_flag(hero_image, LV_OBJ_FLAG_HIDDEN);
     delete_hero_motion_anims();
-    lv_obj_set_style_translate_x(hero_image, 0, 0);
-    lv_obj_set_style_translate_y(hero_image, 0, 0);
-    lv_obj_set_style_transform_scale(hero_image, 256, 0);
-    lv_obj_set_style_opa(hero_image, LV_OPA_COVER, 0);
-    lv_obj_add_flag(hero_image, LV_OBJ_FLAG_HIDDEN);
+
+    lv_anim_t y_anim;
+    lv_anim_init(&y_anim);
+    lv_anim_set_var(&y_anim, hero_image);
+    lv_anim_set_values(&y_anim, -(hero_drag_progress * 92) / 100, -112);
+    lv_anim_set_time(&y_anim, 220);
+    lv_anim_set_path_cb(&y_anim, lv_anim_path_ease_in);
+    lv_anim_set_exec_cb(&y_anim, translate_y_exec);
+    lv_anim_start(&y_anim);
+
+    lv_anim_t scale_anim;
+    lv_anim_init(&scale_anim);
+    lv_anim_set_var(&scale_anim, hero_image);
+    lv_anim_set_values(&scale_anim, 256 - (hero_drag_progress * 86) / 100, 150);
+    lv_anim_set_time(&scale_anim, 220);
+    lv_anim_set_path_cb(&scale_anim, lv_anim_path_ease_in);
+    lv_anim_set_exec_cb(&scale_anim, scale_exec);
+    lv_anim_start(&scale_anim);
+
+    lv_anim_t fade_anim;
+    lv_anim_init(&fade_anim);
+    lv_anim_set_var(&fade_anim, hero_image);
+    lv_anim_set_values(&fade_anim, 255 - (hero_drag_progress * 220) / 100, LV_OPA_TRANSP);
+    lv_anim_set_time(&fade_anim, 220);
+    lv_anim_set_path_cb(&fade_anim, lv_anim_path_ease_in);
+    lv_anim_set_exec_cb(&fade_anim, opa_exec);
+    lv_anim_set_completed_cb(&fade_anim, [](lv_anim_t* anim) {
+        lv_obj_t* obj = static_cast<lv_obj_t*>(anim->var);
+        lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_translate_y(obj, 0, 0);
+        lv_obj_set_style_transform_scale(obj, 256, 0);
+        lv_obj_set_style_opa(obj, LV_OPA_COVER, 0);
+    });
+    lv_anim_start(&fade_anim);
     hero_drag_progress = 0;
 }
 
 static void restore_hero_now() {
     if (!hero_image) return;
     hero_dragging = false;
-    set_hero_hidden_for_current_page(false);
+    hero_locally_hidden = false;
     hero_drag_applied_progress = -1;
     delete_hero_motion_anims();
     lv_obj_clear_flag(hero_image, LV_OBJ_FLAG_HIDDEN);
@@ -1372,14 +1301,42 @@ static void restore_hero_now() {
     apply_hero_layout(&current_task);
     lv_obj_set_style_transform_pivot_x(hero_image, 54, 0);
     lv_obj_set_style_transform_pivot_y(hero_image, 54, 0);
-    lv_obj_set_style_translate_x(hero_image, 0, 0);
-    lv_obj_set_style_translate_y(hero_image, 0, 0);
-    lv_obj_set_style_transform_scale(hero_image, 256, 0);
-    lv_obj_set_style_opa(hero_image, LV_OPA_COVER, 0);
-    start_hero_breath(&current_task);
+    lv_obj_set_style_translate_y(hero_image, -96, 0);
+    lv_obj_set_style_transform_scale(hero_image, 170, 0);
+    lv_obj_set_style_opa(hero_image, LV_OPA_TRANSP, 0);
+
+    lv_anim_t y_anim;
+    lv_anim_init(&y_anim);
+    lv_anim_set_var(&y_anim, hero_image);
+    lv_anim_set_values(&y_anim, -96, 0);
+    lv_anim_set_time(&y_anim, 260);
+    lv_anim_set_path_cb(&y_anim, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&y_anim, translate_y_exec);
+    lv_anim_start(&y_anim);
+
+    lv_anim_t scale_anim;
+    lv_anim_init(&scale_anim);
+    lv_anim_set_var(&scale_anim, hero_image);
+    lv_anim_set_values(&scale_anim, 170, 256);
+    lv_anim_set_time(&scale_anim, 260);
+    lv_anim_set_path_cb(&scale_anim, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&scale_anim, scale_exec);
+    lv_anim_set_completed_cb(&scale_anim, [](lv_anim_t* anim) {
+        start_hero_breath(&current_task);
+    });
+    lv_anim_start(&scale_anim);
+
+    lv_anim_t fade_anim;
+    lv_anim_init(&fade_anim);
+    lv_anim_set_var(&fade_anim, hero_image);
+    lv_anim_set_values(&fade_anim, LV_OPA_TRANSP, LV_OPA_COVER);
+    lv_anim_set_time(&fade_anim, 180);
+    lv_anim_set_exec_cb(&fade_anim, opa_exec);
+    lv_anim_start(&fade_anim);
 }
 
 static void consume_hero_drag_requests() {
+    consume_touch_debug();
     const int command = hero_drag_requested_command;
     if (command != 0) {
         hero_drag_requested_command = 0;
@@ -1416,7 +1373,7 @@ void peekdock_screen_restore_hero() {
 }
 
 bool peekdock_screen_hero_hidden() {
-    return hero_hidden_for_current_page();
+    return hero_locally_hidden;
 }
 
 void peekdock_screen_init() {
@@ -1431,85 +1388,88 @@ void peekdock_screen_init() {
     make_passive(content_layer);
     lv_obj_set_size(content_layer, 172, 320);
     lv_obj_align(content_layer, LV_ALIGN_CENTER, 0, 0);
-    apply_shell_surface_style();
+    lv_obj_set_style_bg_color(content_layer, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(content_layer, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(content_layer, 0, 0);
     lv_obj_set_scrollbar_mode(content_layer, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(content_layer, LV_OBJ_FLAG_SCROLLABLE);
 
     title_pill = lv_obj_create(content_layer);
     lv_obj_remove_style_all(title_pill);
     make_passive(title_pill);
-    lv_obj_set_size(title_pill, 76, 24);
+    lv_obj_set_size(title_pill, 72, 25);
     lv_obj_set_style_radius(title_pill, 12, 0);
-    lv_obj_set_style_bg_color(title_pill, lv_color_hex(0x171a21), 0);
-    lv_obj_set_style_bg_opa(title_pill, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(title_pill, lv_color_hex(0x19351f), 0);
+    lv_obj_set_style_bg_opa(title_pill, LV_OPA_60, 0);
     lv_obj_set_style_border_width(title_pill, 1, 0);
-    lv_obj_set_style_border_color(title_pill, lv_color_hex(0x2d323d), 0);
-    lv_obj_set_style_border_opa(title_pill, LV_OPA_40, 0);
-    lv_obj_set_style_shadow_width(title_pill, 0, 0);
-    lv_obj_align(title_pill, LV_ALIGN_TOP_LEFT, 14, 16);
+    lv_obj_set_style_border_color(title_pill, lv_color_hex(0x69c86e), 0);
+    lv_obj_set_style_border_opa(title_pill, LV_OPA_30, 0);
+    lv_obj_set_style_shadow_width(title_pill, 6, 0);
+    lv_obj_set_style_shadow_opa(title_pill, LV_OPA_10, 0);
+    lv_obj_align(title_pill, LV_ALIGN_TOP_LEFT, 18, 24);
 
     title_label = lv_label_create(title_pill);
     make_passive(title_label);
     lv_label_set_text(title_label, "CODEX");
     lv_obj_set_style_text_color(title_label, lv_color_hex(0xf2f0f4), 0);
     lv_obj_set_style_text_font(title_label, LV_FONT_DEFAULT, 0);
-    lv_obj_set_style_text_letter_space(title_label, 1, 0);
+    lv_obj_set_style_text_letter_space(title_label, 0, 0);
     lv_obj_center(title_label);
 
     status_dot = lv_obj_create(content_layer);
     lv_obj_remove_style_all(status_dot);
     make_passive(status_dot);
-    lv_obj_set_size(status_dot, 5, 5);
+    lv_obj_set_size(status_dot, 8, 8);
     lv_obj_set_style_radius(status_dot, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(status_dot, lv_color_hex(0x75c978), 0);
     lv_obj_set_style_bg_opa(status_dot, LV_OPA_COVER, 0);
-    lv_obj_set_style_shadow_width(status_dot, 10, 0);
+    lv_obj_set_style_shadow_width(status_dot, 8, 0);
     lv_obj_set_style_shadow_color(status_dot, lv_color_hex(0x75c978), 0);
     lv_obj_set_style_shadow_opa(status_dot, LV_OPA_50, 0);
-    lv_obj_align_to(status_dot, title_pill, LV_ALIGN_OUT_RIGHT_MID, 57, -2);
+    lv_obj_align(status_dot, LV_ALIGN_TOP_RIGHT, -30, 34);
 
     hero_image = lv_image_create(content_layer);
     make_passive(hero_image);
     lv_image_set_src(hero_image, &codex_idle_p2);
-    lv_obj_align(hero_image, LV_ALIGN_TOP_MID, 0, 64);
+    lv_obj_align(hero_image, LV_ALIGN_TOP_MID, 0, 78);
 
     percent_group = lv_obj_create(content_layer);
     lv_obj_remove_style_all(percent_group);
     make_passive(percent_group);
-    lv_obj_set_size(percent_group, 124, 30);
-    lv_obj_align(percent_group, LV_ALIGN_TOP_MID, 0, 236);
+    lv_obj_set_size(percent_group, 78, 34);
+    lv_obj_align(percent_group, LV_ALIGN_TOP_MID, 0, 242);
 
     percent_label = lv_label_create(percent_group);
     make_passive(percent_label);
     lv_label_set_text(percent_label, "0");
-    lv_obj_set_style_text_color(percent_label, lv_color_hex(0xf5f6f8), 0);
+    lv_obj_set_style_text_color(percent_label, lv_color_hex(0xf3f0f6), 0);
 #if LV_FONT_MONTSERRAT_28
     lv_obj_set_style_text_font(percent_label, &lv_font_montserrat_28, 0);
 #else
     lv_obj_set_style_text_font(percent_label, LV_FONT_DEFAULT, 0);
 #endif
-    lv_obj_set_style_text_align(percent_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_pos(percent_label, 0, -1);
+    lv_obj_set_width(percent_label, 54);
+    lv_obj_set_style_text_align(percent_label, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_align(percent_label, LV_ALIGN_LEFT_MID, 7, -1);
 
     percent_unit_label = lv_label_create(percent_group);
     make_passive(percent_unit_label);
     lv_label_set_text(percent_unit_label, "%");
-    lv_obj_set_style_text_color(percent_unit_label, lv_color_hex(0x8f95a1), 0);
-    lv_obj_set_style_text_opa(percent_unit_label, LV_OPA_60, 0);
+    lv_obj_set_style_text_color(percent_unit_label, lv_color_hex(0xa6abb5), 0);
+    lv_obj_set_style_text_opa(percent_unit_label, LV_OPA_50, 0);
     lv_obj_set_style_text_font(percent_unit_label, LV_FONT_DEFAULT, 0);
-    lv_obj_set_pos(percent_unit_label, 0, 5);
+    lv_obj_align(percent_unit_label, LV_ALIGN_RIGHT_MID, -9, 4);
 
     tool_chip = lv_obj_create(content_layer);
     lv_obj_remove_style_all(tool_chip);
     make_passive(tool_chip);
-    lv_obj_set_size(tool_chip, 92, 26);
+    lv_obj_set_size(tool_chip, 94, 28);
     lv_obj_set_style_radius(tool_chip, 9, 0);
     lv_obj_set_style_bg_color(tool_chip, lv_color_hex(0x15171d), 0);
     lv_obj_set_style_bg_opa(tool_chip, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(tool_chip, 1, 0);
     lv_obj_set_style_border_color(tool_chip, lv_color_hex(0x242832), 0);
-    lv_obj_set_style_border_opa(tool_chip, LV_OPA_40, 0);
-    lv_obj_align(tool_chip, LV_ALIGN_TOP_MID, 0, 208);
+    lv_obj_align(tool_chip, LV_ALIGN_TOP_MID, 0, 188);
     lv_obj_add_flag(tool_chip, LV_OBJ_FLAG_HIDDEN);
 
     tool_dot = lv_obj_create(tool_chip);
@@ -1521,34 +1481,43 @@ void peekdock_screen_init() {
     lv_obj_set_style_bg_opa(tool_dot, LV_OPA_COVER, 0);
     lv_obj_align(tool_dot, LV_ALIGN_LEFT_MID, 15, 0);
 
+    task_type_label = lv_label_create(tool_chip);
+    make_passive(task_type_label);
+    lv_label_set_text(task_type_label, "shell");
+    lv_obj_set_width(task_type_label, 50);
+    lv_label_set_long_mode(task_type_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(task_type_label, lv_color_hex(0x8f95a3), 0);
+    lv_obj_set_style_text_font(task_type_label, LV_FONT_DEFAULT, 0);
+    lv_obj_align(task_type_label, LV_ALIGN_LEFT_MID, 27, 0);
+
     status_label = lv_label_create(content_layer);
     make_passive(status_label);
     lv_label_set_text(status_label, "Refining UI");
-    lv_obj_set_width(status_label, 150);
+    lv_obj_set_width(status_label, 136);
     lv_label_set_long_mode(status_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_color(status_label, lv_color_hex(0xf2f4f8), 0);
+    lv_obj_set_style_text_color(status_label, lv_color_hex(0xe8e5ed), 0);
 #if LV_FONT_MONTSERRAT_16
     lv_obj_set_style_text_font(status_label, &lv_font_montserrat_16, 0);
 #else
     lv_obj_set_style_text_font(status_label, LV_FONT_DEFAULT, 0);
 #endif
     lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(status_label, LV_ALIGN_TOP_MID, 0, 180);
+    lv_obj_align(status_label, LV_ALIGN_TOP_MID, 0, 168);
 
     progress_bar = lv_bar_create(content_layer);
     make_passive(progress_bar);
-    lv_obj_set_size(progress_bar, 116, 4);
+    lv_obj_set_size(progress_bar, 126, 6);
     lv_obj_set_style_radius(progress_bar, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(progress_bar, lv_color_hex(0x1e2128), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(progress_bar, lv_color_hex(0x20232a), LV_PART_MAIN);
     lv_obj_set_style_bg_color(progress_bar, lv_color_hex(0x69c86e), LV_PART_INDICATOR);
     lv_obj_set_style_border_width(progress_bar, 0, 0);
-    lv_obj_align(progress_bar, LV_ALIGN_TOP_MID, 0, 228);
+    lv_obj_align(progress_bar, LV_ALIGN_TOP_MID, 0, 224);
     lv_bar_set_range(progress_bar, 0, 100);
 
     progress_pulse = lv_obj_create(content_layer);
     lv_obj_remove_style_all(progress_pulse);
     make_passive(progress_pulse);
-    lv_obj_set_size(progress_pulse, 16, 4);
+    lv_obj_set_size(progress_pulse, 18, 6);
     lv_obj_set_style_radius(progress_pulse, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(progress_pulse, lv_color_hex(0x69c86e), 0);
     lv_obj_set_style_bg_opa(progress_pulse, LV_OPA_COVER, 0);
@@ -1557,86 +1526,89 @@ void peekdock_screen_init() {
     accept_button = lv_obj_create(content_layer);
     lv_obj_remove_style_all(accept_button);
     make_passive(accept_button);
-    lv_obj_set_size(accept_button, 116, 36);
-    lv_obj_set_style_radius(accept_button, 10, 0);
-    lv_obj_set_style_bg_color(accept_button, lv_color_hex(0x23252e), 0);
+    lv_obj_set_size(accept_button, 108, 34);
+    lv_obj_set_style_radius(accept_button, 14, 0);
+    lv_obj_set_style_bg_color(accept_button, lv_color_hex(0x69c86e), 0);
     lv_obj_set_style_bg_opa(accept_button, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(accept_button, 1, 0);
-    lv_obj_set_style_border_color(accept_button, lv_color_hex(0x353946), 0);
-    lv_obj_set_style_shadow_width(accept_button, 0, 0);
-    lv_obj_align(accept_button, LV_ALIGN_TOP_MID, 0, 225);
+    lv_obj_set_style_shadow_width(accept_button, 10, 0);
+    lv_obj_set_style_shadow_color(accept_button, lv_color_hex(0x69c86e), 0);
+    lv_obj_set_style_shadow_opa(accept_button, LV_OPA_30, 0);
+    lv_obj_align(accept_button, LV_ALIGN_TOP_MID, 0, 220);
     lv_obj_add_flag(accept_button, LV_OBJ_FLAG_HIDDEN);
 
     accept_label = lv_label_create(accept_button);
     make_passive(accept_label);
     lv_label_set_text(accept_label, "review");
-    lv_obj_set_style_text_color(accept_label, lv_color_hex(0xf2f4f8), 0);
+    lv_obj_set_style_text_color(accept_label, lv_color_hex(0x172018), 0);
     lv_obj_set_style_text_font(accept_label, LV_FONT_DEFAULT, 0);
     lv_obj_center(accept_label);
 
     idle_panel = lv_obj_create(content_layer);
     lv_obj_remove_style_all(idle_panel);
     make_passive(idle_panel);
-    lv_obj_set_size(idle_panel, 116, 34);
-    lv_obj_set_style_radius(idle_panel, 9, 0);
-    lv_obj_set_style_bg_color(idle_panel, lv_color_hex(0x23252e), 0);
+    lv_obj_set_size(idle_panel, 126, 40);
+    lv_obj_set_style_radius(idle_panel, 13, 0);
+    lv_obj_set_style_bg_color(idle_panel, lv_color_hex(0x171a21), 0);
     lv_obj_set_style_bg_opa(idle_panel, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(idle_panel, 1, 0);
-    lv_obj_set_style_border_color(idle_panel, lv_color_hex(0x2f333d), 0);
-    lv_obj_set_style_border_opa(idle_panel, LV_OPA_40, 0);
-    lv_obj_set_style_shadow_width(idle_panel, 0, 0);
-    lv_obj_align(idle_panel, LV_ALIGN_TOP_MID, 0, 230);
+    lv_obj_set_style_border_color(idle_panel, lv_color_hex(0x2a2e38), 0);
+    lv_obj_set_style_border_opa(idle_panel, LV_OPA_50, 0);
+    lv_obj_set_style_shadow_width(idle_panel, 8, 0);
+    lv_obj_set_style_shadow_opa(idle_panel, LV_OPA_10, 0);
+    lv_obj_align(idle_panel, LV_ALIGN_TOP_MID, 0, 212);
     lv_obj_add_flag(idle_panel, LV_OBJ_FLAG_HIDDEN);
 
     idle_tail = lv_obj_create(content_layer);
     lv_obj_remove_style_all(idle_tail);
     make_passive(idle_tail);
-    lv_obj_set_size(idle_tail, 7, 7);
-    lv_obj_set_style_bg_color(idle_tail, lv_color_hex(0x23252e), 0);
+    lv_obj_set_size(idle_tail, 8, 8);
+    lv_obj_set_style_bg_color(idle_tail, lv_color_hex(0x171a21), 0);
     lv_obj_set_style_bg_opa(idle_tail, LV_OPA_COVER, 0);
     lv_obj_set_style_transform_angle(idle_tail, 450, 0);
-    lv_obj_align_to(idle_tail, idle_panel, LV_ALIGN_OUT_TOP_MID, 0, 4);
+    lv_obj_align_to(idle_tail, idle_panel, LV_ALIGN_OUT_TOP_MID, 0, 5);
     lv_obj_add_flag(idle_tail, LV_OBJ_FLAG_HIDDEN);
 
     idle_text_label = lv_label_create(idle_panel);
     make_passive(idle_text_label);
     lv_label_set_text(idle_text_label, "patch ready");
-    lv_obj_set_width(idle_text_label, 88);
+    lv_obj_set_width(idle_text_label, 78);
     lv_label_set_long_mode(idle_text_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_color(idle_text_label, lv_color_hex(0xc9d0db), 0);
+    lv_obj_set_style_text_color(idle_text_label, lv_color_hex(0xcfd4dc), 0);
     lv_obj_set_style_text_font(idle_text_label, LV_FONT_DEFAULT, 0);
-    lv_obj_align(idle_text_label, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(idle_text_label, LV_ALIGN_LEFT_MID, 15, 0);
 
     title_small_label = lv_label_create(content_layer);
     make_passive(title_small_label);
     lv_label_set_text(title_small_label, "Idle");
-    lv_obj_set_width(title_small_label, 134);
+    lv_obj_set_width(title_small_label, 126);
     lv_label_set_long_mode(title_small_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_color(title_small_label, lv_color_hex(0x7f8794), 0);
+    lv_obj_set_style_text_color(title_small_label, lv_color_hex(0x6f7480), 0);
     lv_obj_set_style_text_font(title_small_label, LV_FONT_DEFAULT, 0);
     lv_obj_set_style_text_align(title_small_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(title_small_label, LV_ALIGN_TOP_MID, 0, 201);
+    lv_obj_align(title_small_label, LV_ALIGN_TOP_MID, 0, 189);
 
-    task_type_label = lv_label_create(content_layer);
-    make_passive(task_type_label);
-    lv_label_set_text(task_type_label, "tool: shell");
-    lv_obj_set_width(task_type_label, 110);
-    lv_obj_set_height(task_type_label, 12);
-    lv_label_set_long_mode(task_type_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_color(task_type_label, lv_color_hex(0xA3AAB8), 0);
-    lv_obj_set_style_text_opa(task_type_label, LV_OPA_60, 0);
-    lv_obj_set_style_text_letter_space(task_type_label, 0, 0);
-    lv_obj_set_style_text_line_space(task_type_label, 0, 0);
-#if LV_FONT_MONTSERRAT_10
-    lv_obj_set_style_text_font(task_type_label, &lv_font_montserrat_10, 0);
-#else
-    lv_obj_set_style_text_font(task_type_label, LV_FONT_DEFAULT, 0);
-#endif
-    lv_obj_set_style_text_align(task_type_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(task_type_label, LV_ALIGN_TOP_MID, 0, 215);
+    mood_bubble = lv_obj_create(content_layer);
+    lv_obj_remove_style_all(mood_bubble);
+    make_passive(mood_bubble);
+    lv_obj_set_size(mood_bubble, 34, 22);
+    lv_obj_set_style_radius(mood_bubble, 11, 0);
+    lv_obj_set_style_bg_color(mood_bubble, lv_color_hex(0x15191f), 0);
+    lv_obj_set_style_bg_opa(mood_bubble, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(mood_bubble, 1, 0);
+    lv_obj_set_style_border_color(mood_bubble, lv_color_hex(0x4c5460), 0);
+    lv_obj_set_style_border_opa(mood_bubble, LV_OPA_50, 0);
+    lv_obj_set_style_shadow_width(mood_bubble, 8, 0);
+    lv_obj_set_style_shadow_opa(mood_bubble, LV_OPA_20, 0);
+    lv_obj_align(mood_bubble, LV_ALIGN_TOP_RIGHT, -18, 76);
+    lv_obj_add_flag(mood_bubble, LV_OBJ_FLAG_HIDDEN);
 
-    mood_bubble = nullptr;
-    mood_label = nullptr;
+    mood_label = lv_label_create(mood_bubble);
+    make_passive(mood_label);
+    lv_label_set_text(mood_label, "<3");
+    lv_obj_set_style_text_color(mood_label, lv_color_hex(0xe6e9ef), 0);
+    lv_obj_set_style_text_font(mood_label, LV_FONT_DEFAULT, 0);
+    lv_obj_center(mood_label);
+    lv_obj_add_flag(mood_label, LV_OBJ_FLAG_HIDDEN);
 
     for (int i = 0; i < 10; ++i) {
         burst_particles[i] = lv_obj_create(content_layer);
@@ -1653,11 +1625,21 @@ void peekdock_screen_init() {
         page_dots[i] = lv_obj_create(content_layer);
         lv_obj_remove_style_all(page_dots[i]);
         make_passive(page_dots[i]);
-        lv_obj_set_size(page_dots[i], 4, 4);
+        lv_obj_set_size(page_dots[i], 6, 6);
         lv_obj_set_style_radius(page_dots[i], LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(page_dots[i], lv_color_hex(0x30343a), 0);
-        lv_obj_align(page_dots[i], LV_ALIGN_BOTTOM_MID, (i - 1) * 14, -18);
+        lv_obj_align(page_dots[i], LV_ALIGN_BOTTOM_MID, (i - 1) * 18, -18);
     }
+
+    touch_debug_label = lv_label_create(content_layer);
+    make_passive(touch_debug_label);
+    lv_label_set_text(touch_debug_label, "touch monitor");
+    lv_obj_set_width(touch_debug_label, 146);
+    lv_label_set_long_mode(touch_debug_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(touch_debug_label, lv_color_hex(0x69707a), 0);
+    lv_obj_set_style_text_font(touch_debug_label, LV_FONT_DEFAULT, 0);
+    lv_obj_set_style_text_align(touch_debug_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(touch_debug_label, LV_ALIGN_TOP_MID, 0, 6);
 
     animation_timer = lv_timer_create(running_tick, 120, nullptr);
     lv_timer_pause(animation_timer);
@@ -1666,10 +1648,8 @@ void peekdock_screen_init() {
     }, 24, nullptr);
     typewriter_timer = lv_timer_create(typewriter_tick, 60, nullptr);
     lv_timer_pause(typewriter_timer);
-    for (int i = 0; i < 3; ++i) hero_hidden_for_page[i] = false;
     task_cache_count = 0;
     selected_task_index = 0;
-    layout_percent_group();
     render_idle();
 }
 
@@ -1705,6 +1685,10 @@ void peekdock_screen_apply_event(const PeekDockEvent* event) {
 
 void peekdock_screen_set_action_callback(PeekDockScreenActionCallback callback) {
     action_callback = callback;
+}
+
+void peekdock_screen_set_touch_debug(const char* text) {
+    set_touch_debug(text);
 }
 
 void peekdock_screen_current_source(char* target, size_t target_size) {

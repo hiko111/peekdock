@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a0f;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    padding: 32px;
+  }
+
+  h2 {
+    color: #e8e5ed;
+    font-size: 14px;
+    margin-bottom: 12px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .screen {
+    width: 172px;
+    height: 320px;
+    background: #000;
+    border-radius: 16px;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #222;
+  }
+
+  /* Title Pill */
+  .title-pill {
+    position: absolute;
+    top: 24px;
+    left: 20px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    transition: all 0.2s ease;
+  }
+
+  .title-pill.codex { background: rgba(105, 200, 110, 0.18); }
+  .title-pill.claude { background: rgba(242, 155, 82, 0.18); }
+  .title-pill.jimeng { background: rgba(168, 117, 255, 0.18); }
+
+  .title-pill span {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 2px;
+  }
+  .title-pill.codex span { color: #69c86e; }
+  .title-pill.claude span { color: #f29b52; }
+  .title-pill.jimeng span { color: #a875ff; }
+
+  /* Status dot */
+  .status-dot {
+    position: absolute;
+    top: 28px;
+    right: 26px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .status-dot.running { background: #69c86e; color: #69c86e; animation: pulse-glow 0.5s ease-in-out infinite alternate, pulse-scale 0.5s ease-in-out infinite alternate; }
+  .status-dot.idle { background: #56605c; color: #56605c; animation: pulse-glow 1s ease-in-out infinite alternate; }
+  .status-dot.needs-input { background: #6da8ff; color: #6da8ff; animation: pulse-glow 1.25s ease-in-out infinite alternate; }
+  .status-dot.failed { background: #f0645b; color: #f0645b; animation: pulse-glow 0.1s ease-in-out infinite alternate; }
+  .status-dot.completed { background: #f2c66d; color: #f2c66d; animation: glow-fade 0.5s ease-out forwards; }
+
+  @keyframes pulse-glow {
+    from { box-shadow: 0 0 6px currentColor; opacity: 0.4; }
+    to { box-shadow: 0 0 14px currentColor; opacity: 1; }
+  }
+  @keyframes pulse-scale {
+    from { transform: scale(1); }
+    to { transform: scale(1.3); }
+  }
+  @keyframes glow-fade {
+    from { box-shadow: 0 0 16px currentColor; opacity: 1; }
+    to { box-shadow: 0 0 0px currentColor; opacity: 0; }
+  }
+
+  /* Hero area */
+  .hero-area {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .hero {
+    width: 108px;
+    height: 108px;
+    border-radius: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 36px;
+    font-weight: 700;
+    transition: all 0.3s ease;
+  }
+  .hero.codex { background: linear-gradient(135deg, #1a3d2a, #2d5c3f); border: 1px solid #69c86e33; }
+  .hero.claude { background: linear-gradient(135deg, #3d2a1a, #5c3f2d); border: 1px solid #f29b5233; }
+  .hero.jimeng { background: linear-gradient(135deg, #2a1a3d, #3f2d5c); border: 1px solid #a875ff33; }
+
+  /* Agent idle micro-animations */
+  .hero.codex { animation: codex-nod 3s ease-in-out infinite; }
+  .hero.claude { animation: claude-sway 3.8s ease-in-out infinite; }
+  .hero.jimeng { animation: jimeng-float 2.5s ease-in-out infinite; }
+
+  @keyframes codex-nod {
+    0%, 90%, 100% { transform: translateY(0) scale(1); }
+    95% { transform: translateY(3px) scale(1.01); }
+  }
+  @keyframes claude-sway {
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(3px); }
+  }
+  @keyframes jimeng-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+  }
+
+  /* Mood bubble */
+  .mood-bubble {
+    position: absolute;
+    top: 88px;
+    right: 20px;
+    font-size: 9px;
+    color: #e6e9ef;
+    opacity: 0;
+    animation: mood-appear 4s ease-in-out infinite;
+  }
+  @keyframes mood-appear {
+    0%, 40%, 60%, 100% { opacity: 0; }
+    45%, 55% { opacity: 1; }
+  }
+
+  /* Idle panel */
+  .idle-panel {
+    position: absolute;
+    top: 172px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 126px;
+    height: 40px;
+    background: #171a21;
+    border: 1px solid #2a2e38;
+    border-radius: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(5, 6, 10, 0.4);
+    animation: panel-breathe 3s ease-in-out infinite;
+  }
+  @keyframes panel-breathe {
+    0%, 100% { transform: translateX(-50%) translateY(0); }
+    50% { transform: translateX(-50%) translateY(-1px); }
+  }
+
+  .idle-panel span {
+    font-size: 10px;
+    color: #cfd4dc;
+    letter-spacing: 0.5px;
+  }
+
+  .idle-tail {
+    position: absolute;
+    top: 165px;
+    left: 50%;
+    transform: translateX(-50%) rotate(45deg);
+    width: 8px;
+    height: 8px;
+    background: #171a21;
+    border-radius: 2px;
+    animation: panel-breathe 3s ease-in-out infinite;
+  }
+
+  /* Progress bar */
+  .progress-wrap {
+    position: absolute;
+    bottom: 62px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .progress-rail {
+    width: 126px;
+    height: 6px;
+    background: #1f2228;
+    border-radius: 3px;
+    overflow: visible;
+    position: relative;
+  }
+
+  .progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: #69c86e;
+    transition: width 0.4s ease;
+    position: relative;
+  }
+
+  .progress-fill::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 1px;
+    width: 18px;
+    height: 4px;
+    background: rgba(255,255,255,0.5);
+    border-radius: 2px;
+    animation: head-glide 1s linear infinite;
+  }
+
+  @keyframes head-glide {
+    from { opacity: 0.7; }
+    to { opacity: 0.2; }
+  }
+
+  /* Progress wave */
+  .progress-fill.wave-1 { background: #4a9c4d; }
+  .progress-fill.wave-2 { background: #52a856; }
+  .progress-fill.wave-3 { background: #5cb45e; }
+  .progress-fill.wave-4 { background: #63c067; }
+  .progress-fill.wave-5 { background: #6bcb70; }
+
+  /* Milestone bounce */
+  .progress-wrap.milestone {
+    animation: screen-shake 0.15s ease-in-out;
+  }
+  @keyframes screen-shake {
+    0%, 100% { transform: translateX(-50%) translateX(0); }
+    25% { transform: translateX(-50%) translateX(-1px); }
+    75% { transform: translateX(-50%) translateX(1px); }
+  }
+
+  /* Tool chip */
+  .tool-chip {
+    position: absolute;
+    top: 160px;
+    left: 50%;
+    transform: translateX(-50%) scale(0.8);
+    width: 94px;
+    height: 28px;
+    background: #15171d;
+    border: 1px solid #242832;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    padding-left: 12px;
+    gap: 6px;
+    opacity: 0;
+    transition: all 0.2s ease;
+  }
+  .tool-chip.visible {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+
+  .tool-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #69c86e;
+  }
+
+  .tool-chip span {
+    font-size: 9px;
+    color: #8f95a3;
+  }
+
+  /* Page dots */
+  .page-dots {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 12px;
+  }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #30343a;
+    transition: all 0.2s ease;
+  }
+  .dot.active {
+    width: 18px;
+    background: #fff;
+  }
+
+  /* Progress number */
+  .progress-num {
+    position: absolute;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: baseline;
+    gap: 2px;
+  }
+
+  .progress-num .num {
+    font-size: 22px;
+    font-weight: 700;
+    color: #f3f0f6;
+  }
+
+  .progress-num .pct {
+    font-size: 11px;
+    color: #a6abb5;
+    opacity: 0.5;
+  }
+
+  /* Input bubble (needs_input state) */
+  .input-bubble {
+    position: absolute;
+    top: 72px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .input-bubble.visible { display: flex; animation: bubble-bounce 2s ease-in-out infinite; }
+
+  .input-bubble .q {
+    font-size: 16px;
+    color: #6da8ff;
+  }
+  .input-bubble .sub {
+    font-size: 8px;
+    color: #6da8ff;
+    opacity: 0.7;
+  }
+  @keyframes bubble-bounce {
+    0%, 100% { transform: translateX(-50%) translateY(0); }
+    50% { transform: translateX(-50%) translateY(-3px); }
+  }
+
+  /* Status label */
+  .status-label {
+    position: absolute;
+    bottom: 76px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: #e8e5ed;
+    text-align: center;
+    max-width: 136px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Agent selector */
+  .agent-selector {
+    margin-top: 24px;
+    display: flex;
+    gap: 8px;
+  }
+
+  .agent-btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    border: 1px solid;
+    transition: all 0.15s ease;
+    color: #e8e5ed;
+    background: transparent;
+  }
+  .agent-btn.codex { border-color: #69c86e33; }
+  .agent-btn.claude { border-color: #f29b5233; }
+  .agent-btn.jimeng { border-color: #a875ff33; }
+  .agent-btn.codex.active { background: rgba(105,200,110,0.15); color: #69c86e; }
+  .agent-btn.claude.active { background: rgba(242,155,82,0.15); color: #f29b52; }
+  .agent-btn.jimeng.active { background: rgba(168,117,255,0.15); color: #a875ff; }
+
+  .controls {
+    margin-top: 16px;
+    display: flex;
+    gap: 8px;
+  }
+
+  .ctrl-btn {
+    padding: 5px 12px;
+    border-radius: 5px;
+    font-size: 10px;
+    cursor: pointer;
+    background: #1f2228;
+    border: 1px solid #30343a;
+    color: #6f7480;
+    transition: all 0.1s;
+  }
+  .ctrl-btn:hover { border-color: #69c86e; color: #69c86e; }
+
+  .info {
+    margin-top: 20px;
+    color: #6f7480;
+    font-size: 10px;
+    text-align: center;
+    max-width: 320px;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+<h2>PeekDock Preview</h2>
+
+<div class="screen" id="screen">
+  <!-- Title pill -->
+  <div class="title-pill codex" id="titlePill">
+    <span id="titleText">CODEX</span>
+  </div>
+
+  <!-- Status dot -->
+  <div class="status-dot idle" id="statusDot"></div>
+
+  <!-- Hero -->
+  <div class="hero-area">
+    <div class="hero codex" id="hero">CX</div>
+  </div>
+
+  <!-- Mood bubble -->
+  <div class="mood-bubble" id="moodBubble">❤️</div>
+
+  <!-- Input bubble (needs_input) -->
+  <div class="input-bubble" id="inputBubble">
+    <div class="q">❶</div>
+    <div class="sub">waiting</div>
+  </div>
+
+  <!-- Idle panel -->
+  <div class="idle-panel" id="idlePanel">
+    <span id="idleText">bug blanket</span>
+  </div>
+  <div class="idle-tail" id="idleTail"></div>
+
+  <!-- Tool chip -->
+  <div class="tool-chip" id="toolChip">
+    <div class="tool-dot" id="toolDot"></div>
+    <span id="toolName">bash</span>
+  </div>
+
+  <!-- Status label -->
+  <div class="status-label" id="statusLabel">ready to ship</div>
+
+  <!-- Progress number -->
+  <div class="progress-num">
+    <span class="num" id="progressNum">0</span>
+    <span class="pct">%</span>
+  </div>
+
+  <!-- Progress bar -->
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-rail">
+      <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+    </div>
+  </div>
+
+  <!-- Page dots -->
+  <div class="page-dots">
+    <div class="dot active" id="dot0"></div>
+    <div class="dot" id="dot1"></div>
+    <div class="dot" id="dot2"></div>
+  </div>
+</div>
+
+<!-- Controls -->
+<div class="agent-selector">
+  <button class="agent-btn codex active" onclick="setAgent('codex')">CodeX</button>
+  <button class="agent-btn claude" onclick="setAgent('claude')">Claude</button>
+  <button class="agent-btn jimeng" onclick="setAgent('jimeng')">JIMENG</button>
+</div>
+
+<div class="controls">
+  <button class="ctrl-btn" onclick="setStatus('idle')">idle</button>
+  <button class="ctrl-btn" onclick="setStatus('running')">running</button>
+  <button class="ctrl-btn" onclick="setStatus('needs_input')">needs_input</button>
+  <button class="ctrl-btn" onclick="setStatus('completed')">completed</button>
+  <button class="ctrl-btn" onclick="setStatus('failed')">failed</button>
+  <button class="ctrl-btn" onclick="addProgress()">+25%</button>
+</div>
+
+<div class="info">
+  左上角：Title Pill — agent color + 透明背景<br>
+  右上角：Status Dot — 每种状态不同动画<br>
+  中心：Hero — 各 agent 有专属微动作<br>
+  气泡：Idle Panel — 跟随 hero 同步呼吸<br>
+  底部：Progress — 动态高光 + milestone 时微震<br>
+  右上小字：Mood Bubble — idle 时显示心情<br>
+</div>
+
+<script>
+const agents = {
+  codex: {
+    color: '#69c86e',
+    label: 'CODEX',
+    idleTexts: ['bug blanket', 'patch paws', 'lint dreams', 'coffee break', 'tiny compiler', 'ship spark'],
+    mood: '❤️'
+  },
+  claude: {
+    color: '#f29b52',
+    label: 'CLAUDE',
+    idleTexts: ['tiny thoughts', 'soft logic', 'draft nest', 'book hug', 'calm brain', 'note cozy'],
+    mood: '✨'
+  },
+  jimeng: {
+    color: '#a875ff',
+    label: 'JIMENG',
+    idleTexts: ['paint nap', 'cloud doodle', 'color snack', 'tiny sparkle', 'canvas purr', 'dream ink'],
+    mood: '🎨'
+  }
+};
+
+let currentAgent = 'codex';
+let currentStatus = 'idle';
+let progress = 0;
+let idleTick = 0;
+
+function setAgent(agent) {
+  currentAgent = agent;
+  document.querySelectorAll('.agent-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.agent-btn.${agent}`).classList.add('active');
+
+  const a = agents[agent];
+  document.getElementById('hero').className = `hero ${agent}`;
+  document.getElementById('hero').textContent = agent === 'codex' ? 'CX' : agent === 'claude' ? 'CL' : 'JM';
+  document.getElementById('titlePill').className = `title-pill ${agent}`;
+  document.getElementById('titleText').textContent = a.label;
+  document.getElementById('toolDot').style.background = a.color;
+  document.getElementById('moodBubble').textContent = a.mood;
+  document.getElementById('toolChip').className = 'tool-chip';
+  updateIdleText();
+  setStatus(currentStatus);
+}
+
+function setStatus(status) {
+  currentStatus = status;
+  const dot = document.getElementById('statusDot');
+  const hero = document.getElementById('hero');
+  const toolChip = document.getElementById('toolChip');
+  const idlePanel = document.getElementById('idlePanel');
+  const inputBubble = document.getElementById('inputBubble');
+
+  dot.className = `status-dot ${status}`;
+
+  if (status === 'idle') {
+    idlePanel.style.display = 'flex';
+    hero.style.opacity = '1';
+    toolChip.className = 'tool-chip';
+    inputBubble.className = 'input-bubble';
+    updateIdleText();
+  } else if (status === 'running') {
+    idlePanel.style.display = 'none';
+    hero.style.opacity = '1';
+    toolChip.className = 'tool-chip visible';
+    inputBubble.className = 'input-bubble';
+    document.getElementById('toolName').textContent = 'building...';
+  } else if (status === 'needs_input') {
+    idlePanel.style.display = 'none';
+    hero.style.opacity = '1';
+    toolChip.className = 'tool-chip';
+    inputBubble.className = 'input-bubble visible';
+  } else if (status === 'completed') {
+    idlePanel.style.display = 'none';
+    toolChip.className = 'tool-chip';
+    inputBubble.className = 'input-bubble';
+    setTimeout(() => triggerBurst(), 50);
+  } else if (status === 'failed') {
+    idlePanel.style.display = 'none';
+    toolChip.className = 'tool-chip';
+    inputBubble.className = 'input-bubble';
+  }
+
+  if (status !== 'running') {
+    toolChip.className = 'tool-chip';
+  }
+}
+
+function updateIdleText() {
+  const texts = agents[currentAgent].idleTexts;
+  document.getElementById('idleText').textContent = texts[idleTick % texts.length];
+  idleTick++;
+}
+
+function addProgress() {
+  progress = Math.min(100, progress + 25);
+  document.getElementById('progressNum').textContent = progress;
+  document.getElementById('progressFill').style.width = progress + '%';
+
+  const waves = ['wave-1','wave-2','wave-3','wave-4','wave-5'];
+  const wave = Math.floor((progress / 25) % 5);
+  document.getElementById('progressFill').className = `progress-fill ${waves[wave]}`;
+
+  // milestone shake
+  if (progress > 0 && progress % 25 === 0) {
+    const wrap = document.getElementById('progressWrap');
+    wrap.classList.add('milestone');
+    setTimeout(() => wrap.classList.remove('milestone'), 200);
+  }
+}
+
+function triggerBurst() {
+  // Simple burst effect via CSS
+  const hero = document.getElementById('hero');
+  hero.style.animation = 'none';
+  hero.offsetHeight; // reflow
+  hero.style.animation = 'codex-nod 0.3s ease-out';
+  setTimeout(() => {
+    hero.style.animation = `${currentAgent === 'codex' ? 'codex-nod' : currentAgent === 'claude' ? 'claude-sway' : 'jimeng-float'} 3s ease-in-out infinite`;
+  }, 300);
+}
+
+// idle text rotation
+setInterval(() => {
+  if (currentStatus === 'idle') updateIdleText();
+}, 3000);
+
+// progress wave animation
+let waveTick = 0;
+setInterval(() => {
+  if (currentStatus === 'running' && progress > 0) {
+    const waves = ['wave-1','wave-2','wave-3','wave-4','wave-5'];
+    const wave = waveTick % 5;
+    document.getElementById('progressFill').className = `progress-fill ${waves[wave]}`;
+    waveTick++;
+  }
+}, 500);
+</script>
+
+</body>
+</html>

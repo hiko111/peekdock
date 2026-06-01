@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.peekdock.bridge</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/node</string>
+    <string>runtime-bridge/server.mjs</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/karinadeng/Documents/peekdock</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PEEKDOCK_SERIAL_PORT</key>
+    <string>/dev/cu.usbmodem1301</string>
+    <key>PEEKDOCK_HEADLESS</key>
+    <string>1</string>
+    <key>HOST</key>
+    <string>127.0.0.1</string>
+    <key>PORT</key>
+    <string>4173</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/karinadeng/Documents/peekdock/logs/peekdock-bridge.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/karinadeng/Documents/peekdock/logs/peekdock-bridge.err.log</string>
+</dict>
+</plist>

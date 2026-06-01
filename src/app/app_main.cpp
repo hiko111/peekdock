@@ -9,6 +9,7 @@
 #include "esp_lcd_touch.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
@@ -35,6 +36,15 @@ static constexpr int LCD_DRAW_BUFFER_HEIGHT = 50;
 static constexpr bool LCD_DRAW_BUFFER_DOUBLE = true;
 static constexpr int SERIAL_TASK_STACK_SIZE = 8192;
 static constexpr int TOUCH_TASK_STACK_SIZE = 4096;
+static constexpr int TOUCH_EDGE_ZONE = 44;
+static constexpr int TOUCH_TAP_SLOP = 18;
+static constexpr int TOUCH_DOUBLE_TAP_MIN_US = 70000;
+static constexpr int TOUCH_DOUBLE_TAP_MAX_US = 360000;
+static constexpr int TOUCH_DOUBLE_TAP_DISTANCE = 26;
+static constexpr int TOUCH_DIRECTION_SLOP = 10;
+static constexpr int TOUCH_HORIZONTAL_LOCK_DISTANCE = 32;
+static constexpr int TOUCH_HORIZONTAL_FIRE_DISTANCE = 40;
+static constexpr int TOUCH_POLL_MS = 22;
 
 static esp_lcd_panel_io_handle_t io_handle = nullptr;
 static esp_lcd_panel_handle_t panel_handle = nullptr;
@@ -46,15 +56,86 @@ static uint16_t touch_press_x = 0;
 static uint16_t touch_press_y = 0;
 static uint16_t touch_last_x = 0;
 static uint16_t touch_last_y = 0;
+static uint16_t last_tap_x = 0;
+static uint16_t last_tap_y = 0;
+static int64_t touch_press_us = 0;
+static int64_t last_tap_us = 0;
 static bool touch_was_down = false;
+static bool touch_horizontal_swipe_fired = false;
+
+enum class TouchGestureMode {
+    pending,
+    horizontal_swipe,
+    tap_candidate,
+    consumed,
+};
+
+static TouchGestureMode touch_gesture_mode = TouchGestureMode::pending;
+
+static void touch_debug(const char* text) {
+    ESP_LOGI(TAG, "touch: %s", text ? text : "");
+}
+
+static bool with_lvgl_lock(uint32_t timeout_ms) {
+    return lvgl_port_lock(timeout_ms);
+}
+
+static void unlock_lvgl() {
+    lvgl_port_unlock();
+}
+
+static bool screen_current_needs_confirmation() {
+    bool needs_confirmation = false;
+    if (with_lvgl_lock(50)) {
+        needs_confirmation = peekdock_screen_current_needs_confirmation();
+        unlock_lvgl();
+    } else {
+        touch_debug("needs confirmation lock miss");
+    }
+    return needs_confirmation;
+}
+
+static void screen_current_source(char* target, size_t target_size) {
+    if (!target || target_size == 0) return;
+    target[0] = '\0';
+    if (with_lvgl_lock(50)) {
+        peekdock_screen_current_source(target, target_size);
+        unlock_lvgl();
+    } else {
+        touch_debug("current source lock miss");
+    }
+}
+
+static void screen_switch_page(int direction) {
+    if (direction == 0) return;
+    if (with_lvgl_lock(50)) {
+        peekdock_screen_switch_page(direction);
+        unlock_lvgl();
+    } else {
+        touch_debug("switch page lock miss");
+    }
+}
+
+static void screen_touch_feedback() {
+    if (with_lvgl_lock(50)) {
+        peekdock_screen_touch_feedback();
+        unlock_lvgl();
+    } else {
+        touch_debug("touch feedback lock miss");
+    }
+}
 
 static void send_action_event(const char* action) {
     if (!action || action[0] == '\0') return;
+    char source[24] = {};
+    screen_current_source(source, sizeof(source));
+    const char* payload_source = source[0] ? source : "codex";
     char line[192];
     const int written = snprintf(
         line,
         sizeof(line),
-        "{\"schema_version\":1,\"type\":\"action_event\",\"source\":\"codex\",\"action\":\"%s\"}\n",
+        "{\"schema_version\":1,\"type\":\"action_event\",\"source\":\"%s\",\"action\":\"%s\"}\n",
+        payload_source,
         action
     );
     if (written > 0) {
@@ -62,11 +143,92 @@ static void send_action_event(const char* action) {
     }
 }
 
-static void set_touch_debug_text(const char* text) {
-    if (lvgl_port_lock(0)) {
-        peekdock_screen_set_touch_debug(text);
-        lvgl_port_unlock();
+static void reset_touch_sequence() {
+    touch_was_down = false;
+    touch_horizontal_swipe_fired = false;
+    touch_gesture_mode = TouchGestureMode::pending;
+}
+
+static bool is_horizontal_lock(int dx, int dy) {
+    const int abs_dx = std::abs(dx);
+    const int abs_dy = std::abs(dy);
+    return abs_dx > TOUCH_HORIZONTAL_LOCK_DISTANCE && abs_dx * 10 > abs_dy * 15;
+}
+
+static bool is_pending_motion(int dx, int dy) {
+    return std::abs(dx) < TOUCH_DIRECTION_SLOP && std::abs(dy) < TOUCH_DIRECTION_SLOP;
+}
+
+static bool is_small_release(int dx, int dy) {
+    return std::abs(dx) < TOUCH_TAP_SLOP && std::abs(dy) < TOUCH_TAP_SLOP;
+}
+
+static bool is_center_zone(uint16_t x) {
+    return x > TOUCH_EDGE_ZONE && x < LCD_H_RES - TOUCH_EDGE_ZONE;
+}
+
+static bool is_double_tap_candidate(uint16_t x, uint16_t y, int64_t now_us) {
+    if (!is_center_zone(x) || last_tap_us <= 0) return false;
+    const int64_t delta_us = now_us - last_tap_us;
+    if (delta_us < TOUCH_DOUBLE_TAP_MIN_US || delta_us > TOUCH_DOUBLE_TAP_MAX_US) return false;
+    return std::abs(static_cast<int>(x) - static_cast<int>(last_tap_x)) <= TOUCH_DOUBLE_TAP_DISTANCE &&
+        std::abs(static_cast<int>(y) - static_cast<int>(last_tap_y)) <= TOUCH_DOUBLE_TAP_DISTANCE;
+}
+
+static void arm_single_tap(uint16_t x, uint16_t y, int64_t now_us) {
+    last_tap_us = now_us;
+    last_tap_x = x;
+    last_tap_y = y;
+}
+
+static void clear_tap_memory() {
+    last_tap_us = 0;
+    last_tap_x = 0;
+    last_tap_y = 0;
+}
+
+static void perform_page_switch(int direction) {
+    screen_switch_page(direction);
+    send_action_event(direction > 0 ? "switch_agent_next" : "switch_agent_prev");
+}
+
+static void handle_tap_release(uint16_t x, uint16_t y, int64_t now_us) {
+    if (is_center_zone(x) && is_double_tap_candidate(x, y, now_us) && !screen_current_needs_confirmation()) {
+        touch_debug("double tap open");
+        screen_touch_feedback();
+        send_action_event("open_agent");
+        clear_tap_memory();
+        return;
     }
+
+    if (screen_current_needs_confirmation() && is_center_zone(x)) {
+        touch_debug("tap accept");
+        send_action_event("accept_confirmation");
+        clear_tap_memory();
+        return;
+    }
+
+    if (x <= TOUCH_EDGE_ZONE) {
+        touch_debug("tap prev");
+        perform_page_switch(-1);
+        clear_tap_memory();
+        return;
+    }
+
+    if (x >= LCD_H_RES - TOUCH_EDGE_ZONE) {
+        touch_debug("tap next");
+        perform_page_switch(1);
+        clear_tap_memory();
+        return;
+    }
+
+    if (is_center_zone(x)) {
+        touch_debug("tap armed");
+        arm_single_tap(x, y, now_us);
+        return;
+    }
+
+    clear_tap_memory();
 }
 
 static void touch_poll_task(void*) {
@@ -82,43 +244,69 @@ static void touch_poll_task(void*) {
         esp_lcd_touch_read_data(touch_handle);
         const bool down = esp_lcd_touch_get_coordinates(touch_handle, x, y, nullptr, &count, 1) && count > 0;
 
-        if (down && !touch_was_down) {
-            touch_press_x = x[0];
-            touch_press_y = y[0];
-            touch_last_x = x[0];
-            touch_last_y = y[0];
-            touch_was_down = true;
-            char debug[96];
-            snprintf(debug, sizeof(debug), "RAW DOWN %u,%u", touch_press_x, touch_press_y);
-            set_touch_debug_text(debug);
-        } else if (down && touch_was_down) {
-            touch_last_x = x[0];
-            touch_last_y = y[0];
-            char debug[96];
-            snprintf(debug, sizeof(debug), "RAW MOVE %u,%u", x[0], y[0]);
-            set_touch_debug_text(debug);
-        } else if (!down && touch_was_down) {
-            touch_was_down = false;
-            const int dx = static_cast<int>(touch_last_x) - static_cast<int>(touch_press_x);
-            const int dy = static_cast<int>(touch_last_y) - static_cast<int>(touch_press_y);
-            const TickType_t now = xTaskGetTickCount();
-            char debug[128];
-            snprintf(debug, sizeof(debug), "RAW UP dx=%d dy=%d", dx, dy);
-            set_touch_debug_text(debug);
+    if (down && !touch_was_down) {
+        touch_press_x = x[0];
+        touch_press_y = y[0];
+        touch_last_x = x[0];
+        touch_last_y = y[0];
+        touch_press_us = esp_timer_get_time();
+        touch_was_down = true;
+        touch_horizontal_swipe_fired = false;
+        touch_gesture_mode = TouchGestureMode::pending;
+    } else if (down && touch_was_down) {
+        touch_last_x = x[0];
+        touch_last_y = y[0];
+        if (touch_gesture_mode == TouchGestureMode::consumed) {
+            vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
+            continue;
+        }
 
-            if (dx < -36 && std::abs(dy) < 90) {
-                set_touch_debug_text("RAW LEFT -> NEXT");
-                send_action_event("switch_agent_next");
-            } else if (dx > 36 && std::abs(dy) < 90) {
-                set_touch_debug_text("RAW RIGHT -> PREV");
-                send_action_event("switch_agent_prev");
-            } else if (dy < -40 && std::abs(dx) < 90) {
-                set_touch_debug_text("RAW UP -> MAC");
-                send_action_event("return_to_mac");
+        const int dx = static_cast<int>(touch_last_x) - static_cast<int>(touch_press_x);
+        const int dy = static_cast<int>(touch_last_y) - static_cast<int>(touch_press_y);
+
+        if (touch_gesture_mode == TouchGestureMode::pending) {
+            if (is_pending_motion(dx, dy)) {
+                vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
+                continue;
+            }
+            if (is_horizontal_lock(dx, dy)) {
+                touch_gesture_mode = TouchGestureMode::horizontal_swipe;
+                clear_tap_memory();
+                touch_debug("gesture horizontal");
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(35));
+        if (touch_gesture_mode == TouchGestureMode::horizontal_swipe) {
+            if (!touch_horizontal_swipe_fired && dx <= -TOUCH_HORIZONTAL_FIRE_DISTANCE) {
+                touch_debug("swipe next");
+                perform_page_switch(1);
+                touch_horizontal_swipe_fired = true;
+                touch_gesture_mode = TouchGestureMode::consumed;
+            } else if (!touch_horizontal_swipe_fired && dx >= TOUCH_HORIZONTAL_FIRE_DISTANCE) {
+                touch_debug("swipe prev");
+                perform_page_switch(-1);
+                touch_horizontal_swipe_fired = true;
+                touch_gesture_mode = TouchGestureMode::consumed;
+            }
+        }
+    } else if (!down && touch_was_down) {
+        const int dx = static_cast<int>(touch_last_x) - static_cast<int>(touch_press_x);
+        const int dy = static_cast<int>(touch_last_y) - static_cast<int>(touch_press_y);
+        const int64_t now_us = esp_timer_get_time();
+
+        if (touch_gesture_mode == TouchGestureMode::pending && is_small_release(dx, dy)) {
+            touch_gesture_mode = TouchGestureMode::tap_candidate;
+            handle_tap_release(touch_last_x, touch_last_y, now_us);
+        } else if (touch_gesture_mode == TouchGestureMode::horizontal_swipe && !touch_horizontal_swipe_fired) {
+            touch_debug("release incomplete horizontal");
+        } else if (touch_gesture_mode == TouchGestureMode::consumed) {
+            touch_debug("release consumed");
+        }
+
+        reset_touch_sequence();
+    }
+
+        vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
     }
 }
 

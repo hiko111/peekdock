@@ -1,12 +1,12 @@
 # PeekDock
 
-PeekDock is a cross-screen AI task dock demo:
+PeekDock is a helper + ESP32 dock for watching AI task state on a small screen.
 
-- Web side: a mock CodeX task page that sends task state to the dock
-- Firmware side: an ESP32 + LVGL small-screen dock UI
-- Bridge: JSON Lines over USB Serial
+- Helper side: `runtime-bridge/server.mjs` watches Codex, Claude Code, and JiMeng, then normalizes task state
+- Firmware side: ESP32 + LVGL renders the dock UI and sends touch actions back
+- Transport: JSON Lines over USB Serial/JTAG
 
-This repo is currently optimized for fast hardware iteration. The structure below separates the active demo path from reference and legacy material so teammates can onboard without guessing.
+This repo is optimized for fast hardware iteration. The active path is `runtime-bridge + src/ firmware + assets`.
 
 ## Start Here
 
@@ -14,8 +14,6 @@ This repo is currently optimized for fast hardware iteration. The structure belo
 - Hardware truth source: [PROJECT_CONTEXT.md](/Users/karinadeng/Documents/peekdock/PROJECT_CONTEXT.md)
 - Current architecture: [memory-bank/architecture.md](/Users/karinadeng/Documents/peekdock/memory-bank/architecture.md)
 - Progress log: [memory-bank/progress.md](/Users/karinadeng/Documents/peekdock/memory-bank/progress.md)
-- Team handoff guide: [docs/TEAM_HANDOFF.md](/Users/karinadeng/Documents/peekdock/docs/TEAM_HANDOFF.md)
-- Hardware porting guide: [docs/HARDWARE_PORTING.md](/Users/karinadeng/Documents/peekdock/docs/HARDWARE_PORTING.md)
 
 ## Repo Map
 
@@ -30,9 +28,8 @@ components/
   esp_lcd_jd9853/             LCD panel driver
   esp_lcd_touch_axs5106/      touch driver
 
-mac-demo/
-  public/                     mock CodeX web UI
-  server.mjs                  localhost helper + serial bridge
+runtime-bridge/
+  server.mjs                  active helper bridge and local debug API
 
 protocol/
   README.md                   JSON Lines contract
@@ -40,19 +37,19 @@ protocol/
 
 scripts/
   convert_lvgl_assets.sh      offline LVGL asset conversion
+  start-peekdock.sh           helper start script
+  com.peekdock.bridge.plist   helper launch agent template
 
 src/
   app/app_main.cpp            firmware entrypoint
   protocol/                   firmware-side event parsing
   ui/screens/                 dock screen UI
 
-docs/
-  TEAM_HANDOFF.md             teammate onboarding
-  HARDWARE_PORTING.md         how to adapt to a different board
-
 legacy/
   platformio-arduino-serial-test/
                               old Arduino smoke test, not active
+  mac-demo-experiments/
+                              old Mac-side experiments, not active
 
 references/
   vendor/waveshare-esp32-s3-touch-lcd-1.47-demo/
@@ -63,8 +60,9 @@ references/
 
 - Firmware entry: [src/app/app_main.cpp](/Users/karinadeng/Documents/peekdock/src/app/app_main.cpp)
 - Firmware build config: [CMakeLists.txt](/Users/karinadeng/Documents/peekdock/CMakeLists.txt), [src/CMakeLists.txt](/Users/karinadeng/Documents/peekdock/src/CMakeLists.txt)
-- Web helper: [mac-demo/server.mjs](/Users/karinadeng/Documents/peekdock/mac-demo/server.mjs)
-- Web UI: [mac-demo/public/index.html](/Users/karinadeng/Documents/peekdock/mac-demo/public/index.html)
+- Active helper: [runtime-bridge/server.mjs](/Users/karinadeng/Documents/peekdock/runtime-bridge/server.mjs)
+- Launch script: [scripts/start-peekdock.sh](/Users/karinadeng/Documents/peekdock/scripts/start-peekdock.sh)
+- LaunchAgent template: [scripts/com.peekdock.bridge.plist](/Users/karinadeng/Documents/peekdock/scripts/com.peekdock.bridge.plist)
 
 ## Not The Main Path
 
@@ -73,11 +71,11 @@ references/
 
 ## Current Demo Flow
 
-1. Start the local web demo
-2. Enter a task in the CodeX-like page
-3. Helper sends `handoff_to_dock` and `task_update` events to the ESP32
-4. ESP32 renders the current task state on the small screen
-5. Helper mocks `running -> completed`
+1. Start `runtime-bridge/server.mjs`
+2. Helper watches Codex, Claude Code, and JiMeng state
+3. Helper sends `task_update`, `task_snapshot`, and transition events to the ESP32
+4. ESP32 renders the active agent on the small screen and can send touch actions back
+5. Helper reopens the right desktop context when the dock asks for it
 
 ## Important Reality Check
 
@@ -86,7 +84,6 @@ This repo currently contains board-specific assumptions for the Waveshare ESP32-
 If your teammate is using a different board, they should not start by editing UI code first. They should first read:
 
 - [PROJECT_CONTEXT.md](/Users/karinadeng/Documents/peekdock/PROJECT_CONTEXT.md)
-- [docs/HARDWARE_PORTING.md](/Users/karinadeng/Documents/peekdock/docs/HARDWARE_PORTING.md)
 
 ## Asset Workflow
 
